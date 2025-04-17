@@ -5,12 +5,15 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "black>=25.1.0",
     "dagster>=1.10.9",
     "duckdb>=1.2.2",
     "pandas>=2.2.3",
+    "requests>=2.32.3",
 ]
 
 [dependency-groups]
 dev = [
     "dagster-webserver>=1.10.9",
+    "ipykernel>=6.29.5",
 ]
