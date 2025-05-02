@@ -1,4 +1,3 @@
-#%%
 import requests
 import time
 import base64
@@ -6,14 +5,13 @@ import hashlib
 import pandas as pd
 import os
 
-
 pd.set_option('display.max_columns', None)
 # API prod connection
 base_url = os.getenv("BASE_URL_WS")
-#%%
+
 IntegrationName = os.getenv("INTEGRATION_NAME_WS") # or other name
 # For prod environment
-secrectAccessKey = os.getenv("SECRET_ACCESS_KEY_WS")   
+secrectAccessKey = os.getenv("SECRET_ACCESS_KEY_WS")  
 subscription_key = os.getenv("SUBSCRIPTION_KEY")
 cache_Control = "no-cache"
 
@@ -26,7 +24,7 @@ def get_server_time():
     return current_time
 
 # calculate TOTP using PBKDF2 with HMAC-SHA1
-def calculate_totp(secret, current_time):
+def calculate_totp(secret:str, current_time):
     iteration_count = 1000
     # calculate TOTP using PBKDF2 with HMAC-SHA1
     key = hashlib.pbkdf2_hmac('sha1', secret.encode(), current_time.encode(), iteration_count)
@@ -63,6 +61,9 @@ for entity in entities_to_fetch:
         server_time = get_server_time()
         totp = calculate_totp(secrectAccessKey, server_time)
         auth_header = create_auth_header(IntegrationName, totp)
+        # Optional: Retreive only updated records since a specific date (Note: Currently this method isn't working and is fetching all the records)
+        # temporal_start = '2024-07-01'
+        # temporal_start = None
         entity_data = get_entity_data(auth_header, subscription_key, entity, skip=skip)
         records = entity_data['value']
         if not records:
@@ -77,7 +78,7 @@ for entity in entities_to_fetch:
         print(f"Total records for {entity}: {len(entity_dataframes[entity])}")
     else:
         print(f"No records found for {entity}")
-    
+  
 # Data Transformation
 df_contracts = entity_dataframes['Contracts']
 df_contractTimes = entity_dataframes['ContractTimes']
@@ -152,7 +153,7 @@ df_join1 = df_join1[df_join1['Status_paymentEstimates'] == 'Approved']
 # print(df_join1) # print main/primary output
 
 # Optional - Write data to a directory
-# df_join1.to_excel(r"directorypath.xlsx")
+df_join1.to_excel(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Wisconsin\Monthly\ws_api_bulk_april.xlsx")
 
 # Associated project ID's/sub project ID's table
 associated_projectNumbers_df = entity_dataframes['ContractProjects'][entity_dataframes['ContractProjects']['Controlling'] == 0]
@@ -163,4 +164,4 @@ associated_projectNumbers = associated_projectNumbers.rename({'Name': 'project_I
 # print(associated_projectNumbers) # print Associated project ID's/sub project ID's table
 
 # Optional - Write data to a directory
-# associated_projectNumbers.to_excel(r"directorypath.xlsx")
+associated_projectNumbers.to_excel(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Wisconsin\Monthly\ws_api_sub_proj_april.xlsx")
