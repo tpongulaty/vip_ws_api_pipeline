@@ -1,3 +1,6 @@
+# Code Location
+"""All the base code for Scraping and API is within the 'poc' folder. For API, there are individual .py files. For Scraping all code is consolidated into a Jupyter Notebook for now."""
+
 # dagster_pipeline_template
 
 - rename entrypoint
@@ -37,4 +40,6 @@ uv lock --upgrade-package requests
 ```
 ``` bash
 uv python install 3.12
+
+
 ```
