@@ -153,7 +153,7 @@ df_join1 = df_join1[df_join1['Status_paymentEstimates'] == 'Approved']
 # print(df_join1) # print main/primary output
 
 # Optional - Write data to a directory
-df_join1.to_excel(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Wisconsin\Monthly\ws_api_bulk_april.xlsx")
+# df_join1.to_excel(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Wisconsin\Monthly\ws_api_bulk_april.xlsx")
 
 # Associated project ID's/sub project ID's table
 associated_projectNumbers_df = entity_dataframes['ContractProjects'][entity_dataframes['ContractProjects']['Controlling'] == 0]
@@ -164,4 +164,4 @@ associated_projectNumbers = associated_projectNumbers.rename({'Name': 'project_I
 # print(associated_projectNumbers) # print Associated project ID's/sub project ID's table
 
 # Optional - Write data to a directory
-associated_projectNumbers.to_excel(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Wisconsin\Monthly\ws_api_sub_proj_april.xlsx")
+# associated_projectNumbers.to_excel(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Wisconsin\Monthly\ws_api_sub_proj_april.xlsx")
