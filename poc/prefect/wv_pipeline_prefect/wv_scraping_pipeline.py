@@ -210,5 +210,21 @@ def transform_and_load_wv(wv_dot_data: pd.DataFrame) -> pd.DataFrame:
 
     except Exception as e:
         print(f"Error in west_virginia_scraping: {e}")
+
+def data_appended_wv(combined_data: pd.DataFrame) -> pd.DataFrame: # Fetch the data appended in the current run
+    EST = pytz.timezone('US/Eastern')
+    now = datetime.now(EST)
+    current_date = now.strftime("%m/%d/%Y")
+    appended_data = combined_data[combined_data["Pull_Date_Initial"] == current_date]
+    if appended_data.empty:
+        print('Data not yet updated on Website.')
+        logging.info(
+            'Data not yet updated on Website.'
+        )
+    else:
+        print('Successfully appended latest data.')
+        logging.info('Successfully appended latest data.')
+    return appended_data
+
 # def()scrape all the current data- asset
 # deduplicate def () -> asset -> partitioned data by pull date

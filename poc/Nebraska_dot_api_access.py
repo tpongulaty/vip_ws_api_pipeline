@@ -43,8 +43,6 @@ def get_entity_data(auth_header, subscription_key, entity,skip=0):
         'Ocp-Apim-Subscription-Key': subscription_key
     }
     params = {'$skip': skip}
-    if temporal_start:
-        params['temporalStart'] = temporal_start
     response = requests.get(f'{base_url}/{entity}', headers=headers, params=params)
     response.raise_for_status()
     return response.json()
@@ -152,7 +150,7 @@ df_join1.drop_duplicates(keep='first',inplace=True)
 # print(df_join1) # print main/primary output
 
 # Optional - Write data to a directory
-# df_join1.to_excel(r"directorypath.xlsx")
+df_join1.to_csv(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Nebraska DOT\Monthly\ne_api_bulk_may_2025.csv")
 
 # Associated project ID's/sub project ID's table
 associated_projectNumbers_df = entity_dataframes['ContractProjects'][entity_dataframes['ContractProjects']['Controlling'] == 0]
@@ -162,4 +160,4 @@ associated_projectNumbers = associated_projectNumbers[['Id_contracts', 'Contract
 associated_projectNumbers = associated_projectNumbers.rename({'Name': 'project_ID'})
 
 # Optional - Write data to a directory
-# associated_projectNumbers.to_excel(r"directorypath.xlsx")
+associated_projectNumbers.to_csv(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Nebraska DOT\Monthly\ne_api_sub_proj_may_2025.csv")
