@@ -19,7 +19,7 @@ def export_duckdb_to_csv(folder,duckdb_file,table_name,filename, output_dir="Mon
     os.makedirs(output_dir, exist_ok=True)
     file_path = os.path.join(db_path,folder,output_dir, file_name) # get the full path of the file to be stored.
 
-    db_file = rf"{db_path}\{folder}\{duckdb_file}.duckdb" # get the path of the db_file
+    db_file = rf"{db_path}\{folder}\{duckdb_file}.duckdb" # get the full path of the db_file
     con = duckdb.connect(db_file)
     df = con.execute(f"SELECT * FROM {table_name}").fetch_df()
     df.to_csv(file_path, index=False)
