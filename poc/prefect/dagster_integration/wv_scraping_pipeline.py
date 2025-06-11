@@ -225,6 +225,3 @@ def data_appended_wv(combined_data: pd.DataFrame) -> pd.DataFrame: # Fetch the d
         print('Successfully appended latest data.')
         logging.info('Successfully appended latest data.')
     return appended_data
-
-# def()scrape all the current data- asset
-# deduplicate def () -> asset -> partitioned data by pull date
