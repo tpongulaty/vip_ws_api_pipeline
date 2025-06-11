@@ -168,7 +168,10 @@ from dagster._core.events import DagsterEventType
 from dagster._core.storage.event_log.base import EventRecordsFilter
 from dagster_pandas import DataFrame
 from dotenv import load_dotenv
-from wv_scraping_pipeline import scrape_raw_wv, transform_and_load_wv, data_appended_wv
+from scraping_pipelines.wv_scraping_pipeline import scrape_raw_wv, transform_and_load_wv, data_appended_wv
+from scraping_pipelines.ok_scraping_pipeline import scrape_raw_ok, transform_and_load_ok, data_appended_ok
+from scraping_pipelines.wa_scraping_pipeline import scrape_raw_wa, transform_and_load_wa, data_appended_wa
+from scraping_pipelines.ga_scraping_pipeline import scrape_raw_ga, transform_and_load_ga, data_appended_ga
 from get_duckdb_data import export_duckdb_to_csv
 
 load_dotenv()
@@ -180,15 +183,15 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.office365.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 
 # ─────────────────── Asset layer (partitioned) ─────────────
-STATES = ["WV", "CA", "TX", "NY"]
+STATES = ["wv", "ok", "ga", "wa"]
 partitions_def = StaticPartitionsDefinition(STATES)
 
 @asset(partitions_def=partitions_def, key_prefix=["dot_data"])
 def raw_data(context) -> pd.DataFrame:
     state = context.partition_key
-    if state != "WV":
+    if state not in STATES:
         raise NotImplementedError(f"Scraper for {state} not implemented")
-    df = scrape_raw_wv()
+    df = globals()[f"scrape_raw_{state}"]() # Dynamically calls functions according to state passed.
     preview_md = df.head(25).to_markdown()
     context.add_output_metadata(
         {
@@ -205,9 +208,9 @@ def raw_data(context) -> pd.DataFrame:
 )
 def combined_data(context, raw_data) -> pd.DataFrame:
     state = context.partition_key
-    if state != "WV":
+    if state not in STATES:
         raise NotImplementedError
-    df_combined = transform_and_load_wv(raw_data)
+    df_combined = globals()[f"transform_and_load_{state}"](raw_data)
     preview_md = df_combined.head(25).to_markdown()
     context.add_output_metadata({
             "preview": MetadataValue.md(preview_md),
@@ -223,9 +226,9 @@ def combined_data(context, raw_data) -> pd.DataFrame:
 )
 def appended_data(context, combined_data) -> pd.DataFrame:
     state = context.partition_key
-    if state != "WV":
+    if state not in STATES:
         raise NotImplementedError
-    appended_data = data_appended_wv(combined_data)
+    appended_data = globals()[f"data_appended_{state}"](combined_data)
     preview_md = appended_data.to_markdown()
     context.add_output_metadata({
             "preview": MetadataValue.md(preview_md),
@@ -238,10 +241,11 @@ def appended_data(context, combined_data) -> pd.DataFrame:
 @op(config_schema={"state": Field(str)})
 def export_csv(context) -> str:
     state = context.op_config["state"]
-    folder = os.getenv(f"{state}_FOLDER")
-    duckdb_file = os.getenv(f"{state}_DUCKDB_FILE")
-    table_name  = os.getenv(f"{state}_TABLE_NAME")
-    path, _ = export_duckdb_to_csv(folder, duckdb_file, table_name, f"{state}_bulk_pipeline")
+    state_upper   = state.upper() 
+    folder = os.getenv(f"{state_upper}_FOLDER")
+    duckdb_file = os.getenv(f"{state_upper}_DUCKDB_FILE")
+    table_name  = os.getenv(f"{state_upper}_TABLE_NAME")
+    path, _ = export_duckdb_to_csv(folder, duckdb_file, table_name, f"{state_upper}_bulk_pipeline")
     return path
 
 @op(config_schema={"subject": Field(str), "body": Field(str)})
@@ -254,7 +258,7 @@ def notify(context, exported_path: str):
         s.starttls(); s.login(EMAIL_SENDER, EMAIL_PASSWORD); s.send_message(msg)
     logging.info("Email sent")
 
-# ───────── graph: load asset → export → email ─────────
+# ───────── graph: export → email ─────────
 @graph
 def post_process_graph():
     fp  = export_csv()
