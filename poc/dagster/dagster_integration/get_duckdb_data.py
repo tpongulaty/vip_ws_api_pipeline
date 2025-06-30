@@ -14,7 +14,7 @@ def export_duckdb_to_csv(folder,duckdb_file,table_name,filename, output_dir="Mon
     print(db_path)
     now = datetime.now()
     current_year = now.year
-    current_month = now.strftime('%B')
+    current_month = now.strftime('%b')
     file_name = f"{filename}_{current_month}_{current_year}.csv"
     os.makedirs(output_dir, exist_ok=True)
     file_path = os.path.join(db_path,folder,output_dir, file_name) # get the full path of the file to be stored.
