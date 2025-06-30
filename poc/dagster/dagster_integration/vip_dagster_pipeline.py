@@ -144,6 +144,7 @@
 
 
 import os, logging, datetime as dt, smtplib, pandas as pd
+import pytz, datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dagster import (
@@ -158,6 +159,7 @@ from dagster import (
     in_process_executor,
     define_asset_job,
     ScheduleDefinition,
+    build_schedule_from_partitioned_job,
     sensor,
     RunRequest,
     SkipReason,
@@ -172,6 +174,9 @@ from scraping_pipelines.wv_scraping_pipeline import scrape_raw_wv, transform_and
 from scraping_pipelines.ok_scraping_pipeline import scrape_raw_ok, transform_and_load_ok, data_appended_ok
 from scraping_pipelines.wa_scraping_pipeline import scrape_raw_wa, transform_and_load_wa, data_appended_wa
 from scraping_pipelines.ga_scraping_pipeline import scrape_raw_ga, transform_and_load_ga, data_appended_ga
+from scraping_pipelines.de_scraping_pipeline import scrape_raw_de, transform_and_load_de, data_appended_de
+from scraping_pipelines.il_scraping_pipeline import scrape_raw_il, transform_and_load_il, data_appended_il
+from mft_utils import MFTClient
 from get_duckdb_data import export_duckdb_to_csv
 
 load_dotenv()
@@ -183,7 +188,7 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.office365.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 
 # ─────────────────── Asset layer (partitioned) ─────────────
-STATES = ["wv", "ok", "ga", "wa"]
+STATES = ["wv", "ok", "ga", "wa", "de", "il"]  # List of states to automate
 partitions_def = StaticPartitionsDefinition(STATES)
 
 @asset(partitions_def=partitions_def, key_prefix=["dot_data"])
@@ -245,7 +250,8 @@ def export_csv(context) -> str:
     folder = os.getenv(f"{state_upper}_FOLDER")
     duckdb_file = os.getenv(f"{state_upper}_DUCKDB_FILE")
     table_name  = os.getenv(f"{state_upper}_TABLE_NAME")
-    path, _ = export_duckdb_to_csv(folder, duckdb_file, table_name, f"{state_upper}_bulk_pipeline")
+    path, file_name = export_duckdb_to_csv(folder, duckdb_file, table_name, f"{state}_bulk_pipeline_vip")
+    MFTClient.mft_file(path, file_name)
     return path
 
 @op(config_schema={"subject": Field(str), "body": Field(str)})
@@ -275,14 +281,14 @@ asset_job = define_asset_job(
     executor_def=in_process_executor,
 )
 jobs.append(asset_job)
-# schedules.append(
-#     PartitionScheduleDefinition(
-#         name="dot_assets_schedule",
-#         partitioned_job=asset_job,
-#         cron_schedule="0 08 22,L * *",
-#         execution_timezone="US/Eastern",
-#     )
-# )
+schedules.append(
+    build_schedule_from_partitioned_job(
+        name="dot_assets_schedule",
+        job=asset_job,
+        cron_schedule="0 08 22,L * *",
+        execution_timezone="US/Eastern",
+    )
+)
 
 POST_JOBS = {}
 # per-state post-process jobs
@@ -343,7 +349,7 @@ for state in STATES:
 defs = Definitions(
     assets=[raw_data, combined_data, appended_data],
     jobs=jobs,
-    # schedules=schedules,
+    schedules=schedules,
     sensors=SENSORS,
     resources={"io_manager": fs_io_manager},
 )

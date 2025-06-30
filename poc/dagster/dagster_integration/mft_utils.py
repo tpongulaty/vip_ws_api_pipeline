@@ -136,15 +136,12 @@ class MFTClient:
         return redacted_text
     
     # MFT all DOT files
-    def mft_file(file_path, file_name, des_folder = "rgc_analyzed"):
+    def mft_file(file_path, file_name, des_folder = "bps_vip_revealgc"):
             # Load environment variables for credentials (or set manually)
-        MFT_URL = os.getenv(
-            "MFT_BASE_URL", "https://mft.econ.census.gov/cfcc/rest/ft/v3/transfer/"
-        )
-        # MFT_USERNAME = os.getenv("MFT_USERNAME")
-        MFT_USERNAME = "pongu002"
-        # MFT_PASSWORD = os.getenv("MFT_PASSWORD")
-        MFT_PASSWORD = "Connectingtocensus@1996!"
+        MFT_URL = os.getenv("MFT_BASE_URL")
+        MFT_USERNAME = os.getenv("MFT_USERNAME")
+        MFT_PASSWORD = os.getenv("MFT_PASSWORD")
+        
 
         # Create an MFTClient instance
         mft_client = MFTClient(url=MFT_URL, username=MFT_USERNAME, password=MFT_PASSWORD)

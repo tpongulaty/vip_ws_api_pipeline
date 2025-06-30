@@ -11,17 +11,21 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.keys import Keys
 import time
 from datetime import datetime
 import pytz
 import os
-
+from dotenv import load_dotenv
 from webdriver_manager.chrome import ChromeDriverManager
+from dagster import get_dagster_logger
+load_dotenv()
+logger = get_dagster_logger()
 
 def scrape_raw_wa() -> pd.DataFrame:
     # Type the desired file name and save
     pdf_file_path = os.getenv("PDF_FILE_PATH_WA")
-    
+    logger.info("PDF_FILE_PATH_WA → %s", repr(pdf_file_path))
     # Automatic driver installer
     service = Service(ChromeDriverManager().install())
     # Set up the WebDriver
@@ -56,7 +60,6 @@ def scrape_raw_wa() -> pd.DataFrame:
         driver.quit()
 
     # pdf reader
-
     tables = tabula.read_pdf(pdf_file_path, pages='all', multiple_tables=True)
     df = pd.concat(tables, ignore_index=True)
     df['Contract\rNumber'] = df['Contract\rNumber'].astype(str).apply(lambda x: x.split('.')[0].zfill(6)) # makes sure leading zeros are retained by fixing the length of ID to 6. In the website it is mentioned that the contract numbers are 6 in length
