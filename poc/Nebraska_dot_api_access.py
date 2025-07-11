@@ -4,10 +4,16 @@ import base64
 import hashlib
 import pandas as pd
 import os
+import pytz
+from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # API prod connection
 base_url = os.getenv("BASE_URL_NE")
-IntegrationName = os.getenv("OAPI_Census_Contract")
+IntegrationName = os.getenv("INTEGRATION_NAME_NE")
 secrectAccessKey = os.getenv("SECRET_ACCESS_KEY_NE")   
 subscription_key = os.getenv("SUBSCRIPTION_KEY") # dedicated key for all open api tasks
 
@@ -105,14 +111,14 @@ df_join = pd.merge(df_contracts, df_RefVendors, left_on='PrimeRefVendorId_contra
 df_contractProjects = df_contractProjects[df_contractProjects['Controlling_contractProjects'] == 1] # Filter out associated Project id's and keep only the primary one to avoid duplicate data. Also, the rest of the project ID's can be joined through a separate table.
 df_join = pd.merge(df_join, df_contractProjects, left_on='Id_contracts', right_on='ContractId_contractProjects', how='outer')
 
-# join 4: Join PaymentEstimates.ContractId with Contract.Id - **Need to use the most recent payment estimate.
+# join 3: Join PaymentEstimates.ContractId with Contract.Id - **Need to use the most recent payment estimate.
 df_join = pd.merge(df_join, df_paymentEstimates, left_on='Id_contracts', right_on='ContractId_paymentEstimates', how='left')
-# join 5: Join ContractTime.ContractId with Contract.Id 
+# join 4: Join ContractTime.ContractId with Contract.Id 
 df_join = pd.merge(df_join, df_contractTimes, left_on='Id_contracts', right_on= 'ContractId_contractTimes', how = 'left')
 
-# join 6: join 'PaymentEstimate' with 'ContractPaymentEstimateType' on PaymentEstimate.ContractPaymentEstimateTypeId and ContractPaymentEstimateType.ContractPaymentEstimateTypeId
+# join 5: join 'PaymentEstimate' with 'ContractPaymentEstimateType' on PaymentEstimate.ContractPaymentEstimateTypeId and ContractPaymentEstimateType.ContractPaymentEstimateTypeId
 df_join = pd.merge(df_join, df_ContractPaymentEstimateTypes, left_on='ContractPaymentEstimateTypeId_paymentEstimates', right_on='Id_ContractPaymentEstimateTypes', how='left')
-# join 7: 'ContractPaymentEstimateType' and 'RefPaymentEstimateType' on ContractPaymentEstimateType.RefPaymentEstimateTypeId and RefPaymentEstimateType.Id
+# join 6: 'ContractPaymentEstimateType' and 'RefPaymentEstimateType' on ContractPaymentEstimateType.RefPaymentEstimateTypeId and RefPaymentEstimateType.Id
 df_join = pd.merge(df_join, df_RefPaymentEstimateTypes, left_on='RefPaymentEstimateTypeId_ContractPaymentEstimateTypes', right_on='Id_RefPaymentEstimateTypes', how='left' )
 # optional - print all the data fetched
 
@@ -147,10 +153,15 @@ df_join1 = df_join1[df_join1['Name_contractTimes'].isin(['NTP-DT','ACTS','PCD'])
 
 # Drop duplicates as a result of a join with ContractTimes in case
 df_join1.drop_duplicates(keep='first',inplace=True)
-# print(df_join1) # print main/primary output
+
+# Get current year and month of api pulls for writing files appropriately
+EST = pytz.timezone('US/Eastern')
+now = datetime.now(EST)
+current_year = now.year
+current_month = now.strftime('%b') 
 
 # Optional - Write data to a directory
-df_join1.to_csv(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Nebraska DOT\Monthly\ne_api_bulk_may_2025.csv")
+df_join1.to_csv(rf"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Nebraska DOT\Monthly\ne_api_pipeline_vip_{current_month}_{current_year}.csv")
 
 # Associated project ID's/sub project ID's table
 associated_projectNumbers_df = entity_dataframes['ContractProjects'][entity_dataframes['ContractProjects']['Controlling'] == 0]
@@ -160,4 +171,4 @@ associated_projectNumbers = associated_projectNumbers[['Id_contracts', 'Contract
 associated_projectNumbers = associated_projectNumbers.rename({'Name': 'project_ID'})
 
 # Optional - Write data to a directory
-associated_projectNumbers.to_csv(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Nebraska DOT\Monthly\ne_api_sub_proj_may_2025.csv")
+associated_projectNumbers.to_csv(rf"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Nebraska DOT\Monthly\ne_sub_proj_api_pipeline_vip_{current_month}_{current_year}.csv")

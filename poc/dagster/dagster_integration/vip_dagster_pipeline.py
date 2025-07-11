@@ -176,6 +176,8 @@ from scraping_pipelines.wa_scraping_pipeline import scrape_raw_wa, transform_and
 from scraping_pipelines.ga_scraping_pipeline import scrape_raw_ga, transform_and_load_ga, data_appended_ga
 from scraping_pipelines.de_scraping_pipeline import scrape_raw_de, transform_and_load_de, data_appended_de
 from scraping_pipelines.il_scraping_pipeline import scrape_raw_il, transform_and_load_il, data_appended_il
+from scraping_pipelines.il_scraping_pipeline import scrape_raw_la, transform_and_load_la, data_appended_la
+from scraping_pipelines.ny_scraping_pipeline import scrape_raw_ny, transform_and_load_ny, data_appended_ny
 from mft_utils import MFTClient
 from get_duckdb_data import export_duckdb_to_csv
 
@@ -188,7 +190,7 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.office365.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 
 # ─────────────────── Asset layer (partitioned) ─────────────
-STATES = ["wv", "ok", "ga", "wa", "de", "il"]  # List of states to automate
+STATES = ["wv", "ok", "ga", "wa", "de", "il","la","ny"]  # List of states to automate
 partitions_def = StaticPartitionsDefinition(STATES)
 
 @asset(partitions_def=partitions_def, key_prefix=["dot_data"])
@@ -196,7 +198,19 @@ def raw_data(context) -> pd.DataFrame:
     state = context.partition_key
     if state not in STATES:
         raise NotImplementedError(f"Scraper for {state} not implemented")
-    df = globals()[f"scrape_raw_{state}"]() # Dynamically calls functions according to state passed.
+    elif state == "ny" or state == "la":
+        df, df_sub = globals()[f"scrape_raw_{state}"]()
+        # Add metadata for preview
+        preview_md_sub = df_sub.head(25).to_markdown()
+        context.add_output_metadata(
+            {
+                "preview":  MetadataValue.md(preview_md_sub),   # main line for rendering preview
+                "row_count": len(df_sub),                      # optional extras
+            }
+        )
+    else:
+        df = globals()[f"scrape_raw_{state}"]() # Dynamically calls functions according to state passed.
+    # Add metadata for preview
     preview_md = df.head(25).to_markdown()
     context.add_output_metadata(
         {
@@ -211,36 +225,58 @@ def raw_data(context) -> pd.DataFrame:
     ins={"raw_data": AssetIn()},
     key_prefix=["dot_data"],
 )
-def combined_data(context, raw_data) -> pd.DataFrame:
+def combined_data(context, raw_data, raw_data_sub = None) -> pd.DataFrame:
     state = context.partition_key
     if state not in STATES:
-        raise NotImplementedError
-    df_combined = globals()[f"transform_and_load_{state}"](raw_data)
+        raise NotImplementedError(f"Scraper for {state} not implemented")
+    elif state == "ny" or state == "la":
+        if raw_data_sub is None:
+            raise ValueError("raw_data_sub must be provided for NY state")
+        df_combined, df_combined_sub = globals()[f"transform_and_load_{state}"](raw_data, raw_data_sub)
+        preview_md = df_combined.head(25).to_markdown()
+        context.add_output_metadata({
+            "preview": MetadataValue.md(preview_md),
+            "row_count": len(df_combined),
+        }
+        )
+    else:
+        df_combined = globals()[f"transform_and_load_{state}"](raw_data)
     preview_md = df_combined.head(25).to_markdown()
     context.add_output_metadata({
             "preview": MetadataValue.md(preview_md),
             "row_count": len(df_combined),
         }
     )
-    return df_combined
+    return df_combined, df_combined_sub if state in ["ny", "la"] else None
 
 @asset(
     partitions_def=partitions_def,
     ins={"combined_data": AssetIn()},
     key_prefix=["dot_data"],
 )
-def appended_data(context, combined_data) -> pd.DataFrame:
+def appended_data(context, combined_data, combined_data_sub) -> pd.DataFrame:
     state = context.partition_key
     if state not in STATES:
         raise NotImplementedError
-    appended_data = globals()[f"data_appended_{state}"](combined_data)
+    elif state == "la":
+        if combined_data_sub is None:
+            raise ValueError("combined_data_sub must be provided for LA state")
+        appended_data, appended_data_sub = globals()[f"data_appended_{state}"](combined_data, combined_data_sub)
+        preview_md_sub = appended_data_sub.head(25).to_markdown()
+        context.add_output_metadata({
+            "preview": MetadataValue.md(preview_md_sub),
+            "row_count": len(appended_data_sub),
+        })
+    else:
+        appended_data = globals()[f"data_appended_{state}"](combined_data)
+    # Add metadata for preview
     preview_md = appended_data.to_markdown()
     context.add_output_metadata({
             "preview": MetadataValue.md(preview_md),
             "row_count": len(appended_data),
         }
     )
-    return appended_data
+    return appended_data, appended_data_sub if state == "la" else None
 
 # ────────────── export + email ops  ─────────────
 @op(config_schema={"state": Field(str)})
