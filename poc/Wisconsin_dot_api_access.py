@@ -4,6 +4,8 @@ import base64
 import hashlib
 import pandas as pd
 import os
+import pytz
+from datetime import datetime
 
 from dotenv import load_dotenv
 
@@ -155,10 +157,15 @@ df_join1 = df_join[['contract_id','Description_contracts','Location_contracts', 
 
 # Subset records with paymentEstimates status as 'Approved'
 df_join1 = df_join1[df_join1['Status_paymentEstimates'] == 'Approved']
-# print(df_join1) # print main/primary output
+
+# Get current year and month of api pulls for writing files appropriately
+EST = pytz.timezone('US/Eastern')
+now = datetime.now(EST)
+current_year = now.year
+current_month = now.strftime('%b') 
 
 # Optional - Write data to a directory
-df_join1.to_csv(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Wisconsin DOT\Monthly\ws_api_bulk_may_2025.csv")
+df_join1.to_csv(rf"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Wisconsin DOT\Monthly\ws_api_pipeline_vip_{current_month}_{current_year}.csv")
 # Associated project ID's/sub project ID's table
 associated_projectNumbers_df = entity_dataframes['ContractProjects'][entity_dataframes['ContractProjects']['Controlling'] == 0]
 
@@ -168,5 +175,5 @@ associated_projectNumbers = associated_projectNumbers.rename({'Name': 'project_I
 # print(associated_projectNumbers) # print Associated project ID's/sub project ID's table
 
 # Optional - Write data to a directory
-associated_projectNumbers.to_csv(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Wisconsin DOT\Monthly\ws_api_sub_proj_may_2025.csv")
+associated_projectNumbers.to_csv(rf"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\State DOT API\Wisconsin DOT\Monthly\ws_sub_proj_api_pipeline_vip_{current_month}_{current_year}.csv")
 
