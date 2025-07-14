@@ -17,16 +17,20 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import pytz
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 def scrape_raw_ny() -> pd.DataFrame:
     """ Scrapes the NY City DOT data and returns the raw data as a DataFrame."""
     # Set download directory
-    download_dir = r"C:\Users\TarunPongulaty\Downloads"  # Replace with desired path. Ideally where downloads from browser are isolated to avoid conflicts
+    download_dir = os.getenv("DOWNLOAD_DIR_NY")  # Replace with desired path. Ideally where downloads from browser are isolated to avoid conflicts
 
     # Configure Chrome options
     chrome_options = Options()
     chrome_options.add_experimental_option("prefs", {
-        "download.default_directory": download_dir,  # Set default download directory
+        "download.default_directory": rf"{download_dir}",  # Set default download directory
         "download.prompt_for_download": False,  # Disable download prompts
         "directory_upgrade": True,  # Automatically overwrite files
         "safebrowsing.enabled": True  # Enable safe browsing
@@ -131,7 +135,7 @@ def transform_and_load_ny(ny_bulk: pd.DataFrame, ny_amendment: pd.DataFrame) -> 
     """ Transforms the scraped NY data and loads it into DuckDB."""
 
     # Read the lookup table for department/facility names and their corresponding agency names
-    df_lookup = pd.read_excel(r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\NY_City\agency_lookup_table_ny.xlsx")
+    df_lookup = pd.read_excel(os.getenv("NY_LOOKUP_TABLE"))
 
 
     # POST PROCESSING
@@ -167,7 +171,8 @@ def transform_and_load_ny(ny_bulk: pd.DataFrame, ny_amendment: pd.DataFrame) -> 
 
     # DUCKDB INTEGRATION
     # File to store DuckDB data
-    db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\NY_City\data_store_NY.duckdb"
+    db_path = os.getenv("DB_PATH")
+    db_file =  rf"{db_path}\NY_City\data_store_NY.duckdb"
     table_name = "NY_DOT"
 
     # Current scraped data

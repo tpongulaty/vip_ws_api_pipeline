@@ -19,6 +19,9 @@ from selenium.webdriver.common.keys import Keys
 
 
 from webdriver_manager.chrome import ChromeDriverManager
+from dotenv import load_dotenv
+# Load environment variables from .env file
+load_dotenv()
 
 def scrape_raw_de() -> pd.DataFrame:
     # Retrieve all contract numbers
@@ -72,7 +75,8 @@ def scrape_raw_de() -> pd.DataFrame:
 
     # Filter out completed contracts
     # Create connection to duckdb table
-    db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Delaware\data_store_de.duckdb"
+    db_path = os.getenv("DB_PATH")
+    db_file = rf"{db_path}\Delaware\data_store_de.duckdb"
     con = duckdb.connect(db_file)
     # Load existing data from DuckDB
     existing_data = con.execute(f"SELECT * FROM DL_DOT").df()
@@ -379,7 +383,8 @@ def transform_and_load_de(del_dot_data: pd.DataFrame) -> pd.DataFrame:
 
     # DUCKDB INTEGRATION
     # File to store DuckDB data
-    db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Delaware\data_store_DL.duckdb"
+    db_path = os.getenv("DB_PATH")
+    db_file = rf"{db_path}\Delaware\data_store_de.duckdb"
     table_name = "DL_DOT"
 
     # Current scraped data
