@@ -12,7 +12,9 @@ from datetime import datetime
 import pytz
 import time
 import os
-
+from dotenv import load_dotenv  
+# Load environment variables from .env file
+load_dotenv()
 
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -116,7 +118,8 @@ def transform_and_load_wv(wv_dot_data: pd.DataFrame) -> pd.DataFrame:
 
         # DUCKDB INTEGRATION
         # File to store DuckDB data
-        db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\West_virginia\data_store_WV.duckdb"
+        db_path = os.getenv("DB_PATH")
+        db_file = rf"{db_path}\West_virginia\data_store_WV.duckdb"
         table_name = "WV_DOT"
         
         # Current scraped data

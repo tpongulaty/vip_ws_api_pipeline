@@ -249,7 +249,8 @@ def transform_and_load_il(il_dot_data: pd.DataFrame) -> pd.DataFrame:
 
     # DUCKDB INTEGRATION
     # File to store DuckDB data
-    db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Illinois\data_store_IL.duckdb"
+    db_path = os.getenv("DB_PATH")
+    db_file = rf"{db_path}\Illinois\data_store_IL.duckdb"
     table_name = "IL_DOT"
 
     # Current scraped data

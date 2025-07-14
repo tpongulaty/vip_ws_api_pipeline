@@ -200,7 +200,8 @@ def transform_and_load_wa(wa_dot_data: pd.DataFrame) -> pd.DataFrame:
 
     # DUCKDB INTEGRATION
     # File to store DuckDB data
-    db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Washington\data_store_WA.duckdb"
+    db_path = os.getenv("DB_PATH")
+    db_file = rf"{db_path}\Washington\data_store_WA.duckdb"
     table_name = "WA_DOT"
 
     # Current scraped data

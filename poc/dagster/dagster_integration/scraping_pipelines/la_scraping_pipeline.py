@@ -287,7 +287,8 @@ def transform_and_load_la(LA_city_data: pd.DataFrame, LA_city_data_sub: pd.DataF
 
     # DUCKDB INTEGRATION
     # File to store DuckDB data
-    db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\LA_City\data_store_LA.duckdb"
+    db_path = os.getenv("DB_PATH")
+    db_file = rf"{db_path}\LA_City\data_store_LA.duckdb"
     table_name = "LA_DOT"
     table_name_sub = "LA_DOT_sub" 
 

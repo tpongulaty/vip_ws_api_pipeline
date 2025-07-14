@@ -14,6 +14,9 @@ import pytz
 import time
 import os
 from webdriver_manager.chrome import ChromeDriverManager
+from dotenv import load_dotenv  
+# Load environment variables from .env file
+load_dotenv()
 
 def scrape_raw_ga() -> pd.DataFrame:
     # Automatic driver installer
@@ -579,7 +582,8 @@ def transform_and_load_ga(ga_dot_data: pd.DataFrame) -> pd.DataFrame:
 
     # DUCKDB INTEGRATION
     # File to store DuckDB data
-    db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Georgia\data_store_GA.duckdb"
+    db_path = os.getenv('DB_PATH')
+    db_file = rf"{db_path}\Georgia\data_store_GA.duckdb"
     table_name = "GA_DOT"
 
     # Current scraped data

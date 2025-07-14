@@ -1,148 +1,3 @@
-# import os
-# import logging
-# import smtplib
-# from email.mime.text import MIMEText
-# from email.mime.multipart import MIMEMultipart
-# import pandas as pd
-# from dagster import (
-#     asset,
-#     StaticPartitionsDefinition,
-#     AssetIn,
-#     graph,
-#     op,
-#     Definitions,
-#     PartitionScheduleDefinition,
-#     Field,
-#     Out,
-#     in_process_executor,
-#     mem_io_manager,
-# )
-# from get_duckdb_data import export_duckdb_to_csv
-# from mft_utils import MFTClient
-# from wv_scraping_pipeline import scrape_raw_wv, transform_and_load_wv # replace with generic dispatch if needed
-# from dagster_pandas import DataFrame
-# from dotenv import load_dotenv
-
-# # Load environment variables
-# load_dotenv()
-
-# EMAIL_SENDER    = os.getenv("EMAIL_SENDER")
-# EMAIL_PASSWORD  = os.getenv("EMAIL_PASSWORD")
-# EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT")
-# SMTP_SERVER     = os.getenv("SMTP_SERVER", "smtp.office365.com")
-# SMTP_PORT       = int(os.getenv("SMTP_PORT", 587))
-
-# # List of states to automate
-# STATES = ["WV", "CA", "TX", "NY"]
-
-# @op(out=Out(dagster_type=DataFrame),config_schema={"state": Field(str, description="State code for scraping")})
-# def scrape_data(context) -> pd.DataFrame:
-#     state = context.op_config["state"]
-#     logging.info(f"Starting scraping for {state}")
-#     if state == "WV":
-#         raw_df = scrape_raw_wv()
-#         logging.info(f"Completed scraping for {state}")
-#         return raw_df
-#     else:
-#         raise ValueError(f"No scraper implemented for state '{state}'")
-    
-# @op(out=Out(dagster_type=DataFrame),config_schema={"state": Field(str)})
-# def transform_data(context, raw_df) -> pd.DataFrame:
-#     state = context.op_config["state"]
-#     if state == "WV":
-#         combined_df = transform_and_load_wv(raw_df)
-#         return combined_df
-#     else:
-#         raise NotImplementedError(f"Transform not implemented for {state}")
-
-# @op(config_schema={"state": Field(str, description="State code for export and transfer")})
-# def export_and_transfer_csv(context,combined_df):
-#     state = context.op_config["state"]
-#     logging.info(f"Exporting CSV for {state}")
-#     folder      = os.getenv(f"{state}_FOLDER")
-#     duckdb_file = os.getenv(f"{state}_DUCKDB_FILE")
-#     table_name  = os.getenv(f"{state}_TABLE_NAME")
-#     file_path, file_name = export_duckdb_to_csv(folder, duckdb_file, table_name, f"{state}_bulk_pipeline")
-#     logging.info(f"CSV Exported to {file_path}")
-#     # mft_client = MFTClient.from_env()  # assume MFTClient can load creds from env
-#     # mft_client.mft_file(file_path, file_name, des_folder=f"{state}_analyzed")
-#     # logging.info(f"MFT transfer completed for {state}")
-#     return file_path
-
-# @op(config_schema={
-#     "subject": Field(str, description="Email subject"),
-#     "body":    Field(str, description="Email body")
-# })
-# def send_status_email(context, exported_path):
-#     cfg = context.op_config
-#     msg = MIMEMultipart()
-#     msg['From']    = EMAIL_SENDER
-#     msg['To']      = EMAIL_RECIPIENT
-#     msg['Subject'] = cfg['subject']
-#     msg.attach(MIMEText(cfg['body'], 'plain'))
-
-#     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-#         server.starttls()
-#         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-#         server.send_message(msg)
-#     logging.info("Email notification sent.")
-
-# @graph
-# def state_pipeline():
-#     # wire up ops; literal values via config at job creation
-#     raw = scrape_data()
-#     combined = transform_data(raw_df = raw)
-#     file_path = export_and_transfer_csv(combined_df = combined)
-#     send_status_email(exported_path = file_path)
-
-# # Dynamically create a job + schedule for each state
-# jobs = []
-# # schedules = []
-# for state in STATES:
-#     job = state_pipeline.to_job(
-#         name=f"{state.lower()}_pipeline",
-#         config={
-#             "ops": {
-#                 "scrape_data": {
-#                     "config": {"state": state}
-#                 },
-#                 "transform_data": {
-#                     "config": {"state": state}
-#                 },
-#                 "export_and_transfer_csv": {
-#                     "config": {"state": state}
-#                 },
-#                 "send_status_email": {
-#                     "config": {
-#                         "subject": f"{state} DOT Scraping Success",
-#                         "body":    f"{state} pipeline completed successfully."
-#                     }
-#                 }
-#             }
-#         },
-#         executor_def=in_process_executor  # run in-process so mem_io_manager works
-#     )
-#     jobs.append(job)
-#     # schedules.append(
-#     #     ScheduleDefinition(
-#     #         job=job,
-#     #         cron_schedule="0 8 22,L * *",
-#     #         execution_timezone="US/Eastern"
-#     #     )
-#     # )
-
-# # if __name__ == "__main__":
-# # Register all jobs and schedules in Dagster
-# defs = Definitions(
-#     jobs=jobs,
-#     # schedules=schedules,
-#     resources={
-#         "io_manager": mem_io_manager,
-#     }
-    
-# )
-
-
 import os, logging, datetime as dt, smtplib, pandas as pd
 import pytz, datetime
 from email.mime.text import MIMEText
@@ -176,7 +31,7 @@ from scraping_pipelines.wa_scraping_pipeline import scrape_raw_wa, transform_and
 from scraping_pipelines.ga_scraping_pipeline import scrape_raw_ga, transform_and_load_ga, data_appended_ga
 from scraping_pipelines.de_scraping_pipeline import scrape_raw_de, transform_and_load_de, data_appended_de
 from scraping_pipelines.il_scraping_pipeline import scrape_raw_il, transform_and_load_il, data_appended_il
-from scraping_pipelines.il_scraping_pipeline import scrape_raw_la, transform_and_load_la, data_appended_la
+from scraping_pipelines.la_scraping_pipeline import scrape_raw_la, transform_and_load_la, data_appended_la
 from scraping_pipelines.ny_scraping_pipeline import scrape_raw_ny, transform_and_load_ny, data_appended_ny
 from mft_utils import MFTClient
 from get_duckdb_data import export_duckdb_to_csv
@@ -218,27 +73,37 @@ def raw_data(context) -> pd.DataFrame:
             "row_count": len(df),                      # optional extras
         }
     )
-    return df
+    return df, df_sub if state in ["ny", "la"] else None
 
 @asset(
     partitions_def=partitions_def,
     ins={"raw_data": AssetIn()},
     key_prefix=["dot_data"],
 )
-def combined_data(context, raw_data, raw_data_sub = None) -> pd.DataFrame:
+def combined_data(context, raw_data) -> pd.DataFrame:
     state = context.partition_key
     if state not in STATES:
         raise NotImplementedError(f"Scraper for {state} not implemented")
-    elif state == "ny" or state == "la":
-        if raw_data_sub is None:
+    elif state in {"ny", "la"}:
+        df_main, df_sub = raw_data
+        if df_sub is None:
             raise ValueError("raw_data_sub must be provided for NY state")
-        df_combined, df_combined_sub = globals()[f"transform_and_load_{state}"](raw_data, raw_data_sub)
-        preview_md = df_combined.head(25).to_markdown()
+        df_combined, df_combined_sub = globals()[f"transform_and_load_{state}"](df_main, df_sub)
+        preview_md_sub = df_combined_sub.head(25).to_markdown()
         context.add_output_metadata({
-            "preview": MetadataValue.md(preview_md),
-            "row_count": len(df_combined),
-        }
-        )
+            "preview": MetadataValue.md(preview_md_sub),
+            "row_count": len(df_combined_sub),
+        })
+        if state == "ny" and df_sub is not None:
+            # Save the NY amendment data to a CSV file right in this step since it is a special case witout duckdb table
+            # Set the path for saving the NY amendment data
+            ny_amendment_path = os.getenv("NY_AMENDMENT_PATH")
+            EST = pytz.timezone('US/Eastern')
+            now = datetime.now(EST)
+            # Get current year and month of scraping pulls for writing files appropriately
+            current_year = now.year
+            current_month = now.strftime('%b') # e.g., 'Jan', 'Feb', etc.
+            df_combined_sub.to_csv(rf"{ny_amendment_path}\ny_amendment_bulk_pipeline_vip_{current_month}_{current_year}.csv", index=False)
     else:
         df_combined = globals()[f"transform_and_load_{state}"](raw_data)
     preview_md = df_combined.head(25).to_markdown()
@@ -254,13 +119,14 @@ def combined_data(context, raw_data, raw_data_sub = None) -> pd.DataFrame:
     ins={"combined_data": AssetIn()},
     key_prefix=["dot_data"],
 )
-def appended_data(context, combined_data, combined_data_sub) -> pd.DataFrame:
+def appended_data(context, combined_data) -> pd.DataFrame:
     state = context.partition_key
     if state not in STATES:
         raise NotImplementedError
     elif state == "la":
         if combined_data_sub is None:
             raise ValueError("combined_data_sub must be provided for LA state")
+        combined_data, combined_data_sub = combined_data
         appended_data, appended_data_sub = globals()[f"data_appended_{state}"](combined_data, combined_data_sub)
         preview_md_sub = appended_data_sub.head(25).to_markdown()
         context.add_output_metadata({
@@ -288,7 +154,12 @@ def export_csv(context) -> str:
     table_name  = os.getenv(f"{state_upper}_TABLE_NAME")
     path, file_name = export_duckdb_to_csv(folder, duckdb_file, table_name, f"{state}_bulk_pipeline_vip")
     MFTClient.mft_file(path, file_name)
-    return path
+    if state == "la":
+        # For LA, we need to export the sub table as well
+        sub_table_name = f"{table_name}_sub"
+        sub_path, sub_file_name = export_duckdb_to_csv(folder, duckdb_file, sub_table_name, f"{state}_sub_bulk_pipeline_vip")
+        MFTClient.mft_file(sub_path, sub_file_name)
+    return path, sub_path if state == "la" else None
 
 @op(config_schema={"subject": Field(str), "body": Field(str)})
 def notify(context, exported_path: str):
