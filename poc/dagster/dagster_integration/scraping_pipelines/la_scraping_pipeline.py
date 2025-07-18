@@ -1,8 +1,7 @@
-import re
 import os
 import time
-from datetime import timedelta
 import pandas as pd
+from typing import List, Tuple
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -18,13 +17,7 @@ from selenium.common.exceptions import InvalidArgumentException
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.keys import Keys
-import pyautogui
-from email.mime.text import MIMEText
-import smtplib
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
-from dateutil.relativedelta import relativedelta
 import pytz
 import logging
 import duckdb
@@ -32,115 +25,36 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def scrape_raw_la() -> pd.DataFrame:
-    # Get the list of contract numbers with add info. Will be used as input in next step
+service = Service(ChromeDriverManager().install())
+THIS_DIR      = os.path.dirname(os.path.abspath(__file__))
+CHUNK_SIZE    = int(os.getenv("LA_CHUNK_SIZE", 500))                 # >>> ADDED
+PROGRESS_FILE = os.path.join(THIS_DIR, "la_progress.txt")             # >>> ADDED
 
-    # Automatic driver installer
-    service = Service(ChromeDriverManager().install())
-
-    # URL of the site
-    url = 'https://bca.lacity.gov/approvedsubs/'          
-
-    # Start a new browser session
-    driver = webdriver.Chrome(service=service)
-    driver.get(url)
-    row_data_list_la_sub = []
-    header_data_la_sub = ["work_order","project_title","subcontractor_name","work_description","work_value"]
-
+def _load_progress() -> int:                                           # >>> ADDED
     try:
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.ID, "company_wrapper"))
-        )
-        # Submit the search form
-        try: 
-            set_records = driver.find_element(By.XPATH, '//*[@id="company_length"]/label/select/option[4]')
-            set_records.click()
-            table = WebDriverWait(driver, 10).until(
-                EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]'))
-            )
-                
-            # Iterate and extract work order no's & add info over all the pages
-            next_page_button = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, '//*[@id="company_next"]'))
-                ) 
-                
-            while "disabled" not in next_page_button.get_attribute("class"):
-                WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "company_wrapper"))
-                )
-                WebDriverWait(driver, 10).until(
-                EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]/tbody/tr'))
-                )
-                rows = driver.find_elements(By.XPATH, '//*[@id="company"]/tbody/tr')
-                time.sleep(2)
-                for i,row in enumerate(rows):
-                    row_data = row.find_elements(By.XPATH, './td')
-                    row_data_list_la_sub.append([cell.get_attribute("textContent") for cell in row_data[:-1]])   
-                next_page_button_link = driver.find_element(By.XPATH,'//*[@id="company_next"]/a') 
-                next_page_button_link.click()
-                time.sleep(2)
-                WebDriverWait(driver, 10).until(
-                EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]'))
-                )             
-                next_page_button = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, '//*[@id="company_next"]'))
-                )  
-                if "disabled" in next_page_button.get_attribute("class"):
-                    rows =  WebDriverWait(driver, 10).until(
-                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]/tbody/tr'))
-                    )
-                    for i,row in enumerate(rows):
-                        row_data = driver.find_elements(By.XPATH, './td')
-                        row_data_list_la_sub.extend([cell.get_attribute("textContent") for cell in row_data[:1]])
+        return int(open(PROGRESS_FILE).read().strip())
+    except Exception:
+        return 0
 
-        except TimeoutException:
-            print(value,"Not Found")
-            
+def _save_progress(idx: int) -> None:                                 # >>> ADDED
+    with open(PROGRESS_FILE, "w") as fh:
+        fh.write(str(idx))
+    logging.info("[LA] progress pointer saved → %s", idx)
 
-    finally:
-        # Close the browser
-        driver.quit()
-        
-    LA_city_data_sub = pd.DataFrame(data=row_data_list_la_sub, columns = header_data_la_sub)
-    def parse_money(value):
-        if not value:  # Check for None, empty string, or NaN
-            return None
-        # Remove dollar signs and commas
-        value = value.replace('$', '').replace(',', '')
-        # Convert values in parentheses to negative numbers
-        if '(' in value and ')' in value:
-            value = '-' + value[1:-1]  # Remove the parentheses and add a negative sign
-        return float(value) if value.strip() else None
-    # Convert 'work_value' to float for calculating 'Project_Cost_Total'
-    LA_city_data_sub['work_value'] = LA_city_data_sub['work_value'].apply(parse_money)
-    # Calculate 'Project_Cost_Total' by summing 'work_value'
-    LA_city_data_sub['Project_Cost_Total'] = LA_city_data_sub[LA_city_data_sub['work_value'] >= 0].groupby('work_order')['work_value'].transform('sum')
+HEADER_LA: List[str] = []                                              # global header   
 
-
-    # Get the associated data after extracting list of contract numbers in the previous step
-
-    # Automatic driver installer
-    service = Service(ChromeDriverManager().install())
-
+def _scrape_la_chunk(contract_numbers: List[str]) -> List[List[str]]:
+    """Scrape a chunk of LA work orders and return the data as a list of lists."""
+    global HEADER_LA
     # URL of the site
     url = 'https://bca.lacity.org/Payments/payments_search.php'
-
-    # Contract number to search for
-    # contract_numbers= ['E1904038','SZC11765','SZC11922','E170128F','L0249155','E1904256',
-    #                     'SZC11321','E1700415','L0549492','EW40011F','E1907554','L0449473',
-    #                     'L1649430', 'E1907775','E1907703']
-    contract_numbers_list_la = LA_city_data_sub["work_order"].unique()
-    print("Total Contracts:",len(contract_numbers_list_la))
-    contract_numbers = contract_numbers_list_la
-
+    row_data_list_la: List[List[str]] = []
     # Start a new browser session
     driver = webdriver.Chrome(service=service)
     driver.get(url)
-    row_data_list_la = []
-    header_data_la = []
 
     try:
-        for i,value in enumerate(contract_numbers[3000:]):
+        for i,value in enumerate(contract_numbers):
         
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "wo_nbr"))
@@ -165,15 +79,10 @@ def scrape_raw_la() -> pd.DataFrame:
 
                 table = driver.find_element(By.ID, value).find_element(By.TAG_NAME, 'thead').find_element(By.TAG_NAME, 'tr')
                 # Extract the table headers
-                if i == 0: 
+                if not HEADER_LA:  # Only extract headers once
                     headers = table.find_elements(By.TAG_NAME, 'th')
-                    header_data_la.extend([header.get_attribute("textContent").strip() for header in headers if header.get_attribute("textContent").strip()])
-                    header_data_la = ['Work Order','Job Title'] + header_data_la # Add work order and job title to the header list
-
-                if not header_data_la:
-                    headers = table.find_elements(By.TAG_NAME, 'th')
-                    header_data_la.extend([header.get_attribute("textContent").strip() for header in headers if header.get_attribute("textContent").strip()])
-                    header_data_la = ['Work Order','Job Title'] + header_data_la # Add work order and job title to the header list
+                    HEADER_LA.extend([header.get_attribute("textContent").strip() for header in headers if header.get_attribute("textContent").strip()])
+                    HEADER_LA = ['Work Order','Job Title'] + HEADER_LA # Add work order and job title to the header list
 
                 # Set the number of records to display per page
                 # Displays maximum number of records in a page for efficiency
@@ -194,7 +103,7 @@ def scrape_raw_la() -> pd.DataFrame:
                     rows = driver.find_element(By.ID, value).find_element(By.TAG_NAME, 'tbody').find_elements(By.TAG_NAME, 'tr')
                     for row in rows:
                         cols = row.find_elements(By.TAG_NAME, 'td')  # Find data cells
-                        row_data = [value] + [description] + [col.get_attribute("textContent")for col in cols]
+                        row_data = [value] + [description] + [col.get_attribute("textContent") for col in cols]
                         if any(row_data):
                             row_data_list_la.append(row_data)
                     next_page_button.click()
@@ -218,16 +127,128 @@ def scrape_raw_la() -> pd.DataFrame:
             except TimeoutException:
                 print(value,"Data Not Found")
                 
-            # delay_seconds = random.uniform(2,5)
-            # time.sleep(delay_seconds)
             driver.get(url)
+    except TimeoutException:
+            print(value,"Not Found")      
+
+    finally:
+        # Close the browser
+        driver.quit()
+    return row_data_list_la, HEADER_LA
+
+def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Chunk aware LA scraper. Returns (main_df, subcontractor_df)."""
+    # Get the list of contract numbers with add info. Will be used as input in next step
+
+    # URL of the site
+    url_sub = 'https://bca.lacity.gov/approvedsubs/'          
+
+    # Start a new browser session
+    driver = webdriver.Chrome(service=service)
+    driver.get(url_sub)
+    row_data_list_la_sub = []
+    header_data_la_sub = ["work_order","project_title","subcontractor_name","work_description","work_value"]
+
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "company_wrapper"))
+        )
+        # Submit the search form
+         
+        set_records = driver.find_element(By.XPATH, '//*[@id="company_length"]/label/select/option[4]')
+        set_records.click()
+        table = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]'))
+        )
             
+        # Iterate and extract work order no's & add info over all the pages
+        next_page_button = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, '//*[@id="company_next"]'))
+            ) 
+            
+        while "disabled" not in next_page_button.get_attribute("class"):
+            WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "company_wrapper"))
+            )
+            WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]/tbody/tr'))
+            )
+            rows = driver.find_elements(By.XPATH, '//*[@id="company"]/tbody/tr')
+            time.sleep(2)
+            for i,row in enumerate(rows):
+                row_data = row.find_elements(By.XPATH, './td')
+                row_data_list_la_sub.append([cell.get_attribute("textContent") for cell in row_data[:-1]])   
+            next_page_button_link = driver.find_element(By.XPATH,'//*[@id="company_next"]/a') 
+            next_page_button_link.click()
+            time.sleep(2)
+            WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]'))
+            )             
+            next_page_button = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, '//*[@id="company_next"]'))
+            )  
+            if "disabled" in next_page_button.get_attribute("class"):
+                rows =  WebDriverWait(driver, 10).until(
+                EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]/tbody/tr'))
+                )
+                for i,row in enumerate(rows):
+                    row_data = driver.find_elements(By.XPATH, './td')
+                    row_data_list_la_sub.extend([cell.get_attribute("textContent") for cell in row_data[:1]])
+
 
     finally:
         # Close the browser
         driver.quit()
         
-    LA_city_data = pd.DataFrame(data=row_data_list_la, columns = header_data_la) 
+    LA_city_data_sub = pd.DataFrame(data=row_data_list_la_sub, columns = header_data_la_sub)
+    def parse_money(value):
+        if not value:  # Check for None, empty string, or NaN
+            return None
+        # Remove dollar signs and commas
+        value = value.replace('$', '').replace(',', '')
+        # Convert values in parentheses to negative numbers
+        if '(' in value and ')' in value:
+            value = '-' + value[1:-1]  # Remove the parentheses and add a negative sign
+        return float(value) if value.strip() else None
+    # Convert 'work_value' to float for calculating 'Project_Cost_Total'
+    LA_city_data_sub['work_value'] = LA_city_data_sub['work_value'].apply(parse_money)
+    # Calculate 'Project_Cost_Total' by summing 'work_value'
+    LA_city_data_sub['Project_Cost_Total'] = LA_city_data_sub[LA_city_data_sub['work_value'] >= 0].groupby('work_order')['work_value'].transform('sum')
+    contract_numbers_list_la = LA_city_data_sub["work_order"].unique()
+    print("Total Contracts:",len(contract_numbers_list_la))
+    contract_numbers = contract_numbers_list_la
+
+    # Get the associated data after extracting list of contract numbers in the previous step
+    all_rows: List[List[str]] = []
+    start_idx = _load_progress()
+    remaining = contract_numbers[start_idx:]
+    if not remaining:
+        if os.path.exists(PROGRESS_FILE):
+            os.remove(PROGRESS_FILE)
+        return pd.DataFrame(columns=HEADER_LA), LA_city_data_sub  
+    total = len(remaining)
+    for chunk_start in range(0, total, CHUNK_SIZE):
+        chunk_end = min(chunk_start + CHUNK_SIZE, total)
+        subset = remaining[chunk_start:chunk_end]
+        abs_start = start_idx + chunk_start
+        logging.info(f"[LA] chunk {abs_start},{abs_start + len(subset)-1}")
+        try:
+            rows, _ = _scrape_la_chunk(subset)          # >>> ADDED helper above
+            chunk_df = pd.DataFrame(data=rows, columns=HEADER_LA) # Ensures there is no mismatch in columns
+            all_rows.extend(rows)
+            _save_progress(start_idx + chunk_end)                 # >>> ADDED
+        except Exception as exc:
+            logging.exception("[LA] chunk failed: will retry next run", exc_info=exc)
+            if all_rows and HEADER_LA:  # If we have some rows, load them to DB andsave progress
+                tmp_df = pd.DataFrame(all_rows, columns=HEADER_LA)
+                transform_and_load_la(tmp_df, LA_city_data_sub)  # Load the data to DuckDB
+            _save_progress(start_idx + chunk_start)
+            raise
+
+    if os.path.exists(PROGRESS_FILE):
+        os.remove(PROGRESS_FILE)
+
+    LA_city_data = pd.DataFrame(data=all_rows, columns = HEADER_LA) 
 
     return LA_city_data, LA_city_data_sub
 

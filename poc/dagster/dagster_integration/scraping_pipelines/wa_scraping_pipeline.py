@@ -2,6 +2,7 @@ import tabula
 import pyautogui
 import duckdb
 import logging
+from typing import List
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -22,12 +23,123 @@ from dagster import get_dagster_logger
 load_dotenv()
 logger = get_dagster_logger()
 
+
+THIS_DIR      = os.path.dirname(os.path.abspath(__file__))
+CHUNK_SIZE    = int(os.getenv("WA_CHUNK_SIZE", 100))
+PROGRESS_FILE = os.path.join(THIS_DIR, "wa_progress.txt")
+
+HEADER_WA: List[str] = []
+
+# Automatic driver installer
+service = Service(ChromeDriverManager().install())
+
+def _load_progress() -> int:
+    try:
+        return int(open(PROGRESS_FILE).read().strip())
+    except Exception:
+        return 0
+
+def _save_progress(idx: int) -> None:
+    with open(PROGRESS_FILE, "w") as fh:
+        fh.write(str(idx))
+    logger.info("[WA] progress pointer → %s", idx)
+
+def _scrape_wa_chunk(contract_numbers: List[str]) -> List[List[str]]:
+    global HEADER_WA
+    rows: List[List[str]] = []
+    url = 'https://remoteapps.wsdot.wa.gov/construction/project/progress/' 
+    # Start a new browser session
+    driver = webdriver.Chrome(service=service)
+    driver.get(url)
+    driver.maximize_window()
+    try:
+        for i,value in enumerate(contract_numbers):
+            # Wait for the contract number input box to be present
+        
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.ID, "txtContractNumber"))
+            )
+
+            # Find the contract number input box and enter the contract number
+            contract_number_input = driver.find_element(By.ID, "txtContractNumber")
+            contract_number_input.clear()
+            contract_number_input.send_keys(value)
+            
+
+            # Submit the search form
+            contract_number_input.send_keys(Keys.RETURN)
+            # Locate the dropdown element for payment dates
+            try:
+                payment_date_options = WebDriverWait(driver, 100).until(
+                            EC.visibility_of_all_elements_located((By.XPATH, '//*[@id="select-payment-date"]/option'))
+                        )
+                report_counter = 0
+                # iterate over the payment date options:
+                for option in payment_date_options:
+                    if report_counter > 4: # fetch last 4 reports only since historical data has been scraped already
+                        break
+                    option.click()
+                    try:
+                        WebDriverWait(driver, 300).until(
+                            EC.presence_of_element_located((By.ID, 'Page1'))
+                        )
+                        table1 = WebDriverWait(driver, 300).until(
+                            EC.visibility_of_element_located((By.XPATH, '//table[@class="S45"]'))
+                        )
+                        # Find all headers from 2 tables and append them
+                        if not HEADER_WA:  # Only extract headers once
+                            # Find all cells in the row
+                            for row in table1.find_elements(By.XPATH,'.//tr'):    
+                                cells = row.find_elements(By.XPATH,'.//td')    
+                                # Extract headers only from table 1    
+                                HEADER_WA.extend([cells[0].get_attribute("textContent").strip()]) 
+                            del HEADER_WA[2]               
+                            # Extract header only from table 2    
+                            header = driver.find_element(By.XPATH,'//table[@id="List1"]/tbody/tr[last()]/td')
+                            HEADER_WA.extend([header.get_attribute("textContent").strip()])
+
+                        # Extract row data from table 1 and 2
+                        row_data_list = []
+                        for row in table1.find_elements(By.XPATH,'.//tr'):    
+                            cells = row.find_elements(By.XPATH,'.//td')   
+                            # Extract records only from table 1 
+                            if len(cells) >=2:          
+                                values = cells[1].get_attribute("textContent")
+                                if not values:
+                                    values = "N/A"  # Use a default value
+                            if any(values):
+                                row_data_list.append(values)
+                            
+                        del row_data_list[2] # Deletes the empty element extracted  due to extra tag containing just space in html structure
+                        # Extract total from table 2
+                        row_data = driver.find_element(By.XPATH,'//table[@id="List1"]/tbody/tr[last()]/td[last()]')
+                        row_data_list.append(row_data.get_attribute("textContent"))
+                        rows.append(row_data_list)
+                        report_counter += 1
+            
+                    except NoSuchElementException:
+                        print("No Data for", value)    
+                    except TimeoutException:
+                        print(value,"some payment estimate data Not Found")
+                    except Exception as e:
+                        print(f"Error processing payment estimate: {e}")
+            except TimeoutException:
+                        print("Not Found for", value)
+            
+            # delay_seconds = random.uniform(2,10)
+            # time.sleep(delay_seconds)
+            driver.get(url)
+    except TimeoutException:
+        print("Website not responding. Re-run")
+    finally:
+        # Close the browser
+        driver.quit() 
+    return rows
+
 def scrape_raw_wa() -> pd.DataFrame:
     # Type the desired file name and save
     pdf_file_path = os.getenv("PDF_FILE_PATH_WA")
     logger.info("PDF_FILE_PATH_WA → %s", repr(pdf_file_path))
-    # Automatic driver installer
-    service = Service(ChromeDriverManager().install())
     # Set up the WebDriver
     options = webdriver.ChromeOptions() 
     options.add_argument("--start-maximized") # Ensures the browser is fullscreen
@@ -64,104 +176,38 @@ def scrape_raw_wa() -> pd.DataFrame:
     df = pd.concat(tables, ignore_index=True)
     df['Contract\rNumber'] = df['Contract\rNumber'].astype(str).apply(lambda x: x.split('.')[0].zfill(6)) # makes sure leading zeros are retained by fixing the length of ID to 6. In the website it is mentioned that the contract numbers are 6 in length
     contract_numbers_wa = df['Contract\rNumber'].to_list() # 'split('.')[0]' is used above as the pdf reader adds decimals to numbers in some cases
-    # Automatic driver installer
-    service = Service(ChromeDriverManager().install())
-
-    # URL of the site
-    url = 'https://remoteapps.wsdot.wa.gov/construction/project/progress/'
-
     # Contract number to search for
-    contract_numbers = contract_numbers_wa          
-    header_data_wa = []
-    # Start a new browser session
-    driver = webdriver.Chrome(service=service)
-    driver.get(url)
-    driver.maximize_window()
-    row_data_list_wa = []
-    try:
-        for i,value in enumerate(contract_numbers):
-            # Wait for the contract number input box to be present
-        
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "txtContractNumber"))
-            )
+    contract_numbers = contract_numbers_wa  
+    all_rows: List[List[str]] = []
+    start_idx = _load_progress()
+    remaining = contract_numbers[start_idx:]
+    if not remaining:
+        if os.path.exists(PROGRESS_FILE): os.remove(PROGRESS_FILE)
+        return pd.DataFrame(columns=HEADER_WA)
 
-            # Find the contract number input box and enter the contract number
-            contract_number_input = driver.find_element(By.ID, "txtContractNumber")
-            contract_number_input.clear()
-            contract_number_input.send_keys(value)
-            
+    total = len(remaining)
+    for chunk_start in range(0, total, CHUNK_SIZE):
+        chunk_end = min(chunk_start + CHUNK_SIZE, total)
+        subset    = remaining[chunk_start:chunk_end]
+        abs_start = start_idx + chunk_start
+        logger.info("[WA] chunk %s-%s", abs_start, abs_start+len(subset)-1)
+        try:
+            rows = _scrape_wa_chunk(subset)
+            chunk_df = pd.DataFrame(rows, columns=HEADER_WA) # Although not used, it makes sure there are no errors with data extraction
+            all_rows.extend(rows)
+            _save_progress(start_idx + chunk_end)
+        except Exception as exc:
+            logger.exception("[WA] chunk failed: flush & retry", exc_info=exc)
+            if all_rows and HEADER_WA:
+                tmp_df = pd.DataFrame(all_rows, columns=HEADER_WA)
+                transform_and_load_wa(tmp_df)  # unchanged
+            _save_progress(start_idx + chunk_start)
+            raise
 
-            # Submit the search form
-            contract_number_input.send_keys(Keys.RETURN)
-            # Locate the dropdown element for payment dates
-            try:
-                payment_date_options = WebDriverWait(driver, 100).until(
-                            EC.visibility_of_all_elements_located((By.XPATH, '//*[@id="select-payment-date"]/option'))
-                        )
-                report_counter = 0
-                # iterate over the payment date options:
-                for option in payment_date_options:
-                    if report_counter > 4: # fetch last 4 reports only since historical data has been scraped already
-                        break
-                    option.click()
-                    try:
-                        WebDriverWait(driver, 300).until(
-                            EC.presence_of_element_located((By.ID, 'Page1'))
-                        )
-                        table1 = WebDriverWait(driver, 300).until(
-                            EC.visibility_of_element_located((By.XPATH, '//table[@class="S45"]'))
-                        )
-                        # Find all headers from 2 tables and append them
-                        if not header_data_wa:
-                            # Find all cells in the row
-                            for row in table1.find_elements(By.XPATH,'.//tr'):    
-                                cells = row.find_elements(By.XPATH,'.//td')    
-                                # Extract headers only from table 1    
-                                header_data_wa.extend([cells[0].get_attribute("textContent").strip()]) 
-                            del header_data_wa[2]               
-                            # Extract header only from table 2    
-                            header = driver.find_element(By.XPATH,'//table[@id="List1"]/tbody/tr[last()]/td')
-                            header_data_wa.extend([header.get_attribute("textContent").strip()])
+    if os.path.exists(PROGRESS_FILE):
+        os.remove(PROGRESS_FILE)
 
-                        # Extract row data from table 1 and 2
-                        row_data_list = []
-                        for row in table1.find_elements(By.XPATH,'.//tr'):    
-                            cells = row.find_elements(By.XPATH,'.//td')   
-                            # Extract records only from table 1 
-                            if len(cells) >=2:          
-                                values = cells[1].get_attribute("textContent")
-                                if not values:
-                                    values = "N/A"  # Use a default value
-                            if any(values):
-                                row_data_list.append(values)
-                            
-                        del row_data_list[2] # Deletes the empty element extracted  due to extra tag containing just space in html structure
-                        # Extract total from table 2
-                        row_data = driver.find_element(By.XPATH,'//table[@id="List1"]/tbody/tr[last()]/td[last()]')
-                        row_data_list.append(row_data.get_attribute("textContent"))
-                        row_data_list_wa.extend([row_data_list])
-                        report_counter += 1
-            
-                    except NoSuchElementException:
-                        print("No Data for", value)    
-                    except TimeoutException:
-                        print(value,"some payment estimate data Not Found")
-                    except Exception as e:
-                        print(f"Error processing payment estimate: {e}")
-            except TimeoutException:
-                        print("Not Found for", value)
-            
-            # delay_seconds = random.uniform(2,10)
-            # time.sleep(delay_seconds)
-            driver.get(url)
-    except TimeoutException:
-        print("Website not responding. Re-run")
-    finally:
-        # Close the browser
-        driver.quit()
-        
-    wa_dot_data = pd.DataFrame(data=row_data_list_wa, columns = header_data_wa)
+    wa_dot_data = pd.DataFrame(data=all_rows, columns=HEADER_WA)
     return wa_dot_data
 
 def transform_and_load_wa(wa_dot_data: pd.DataFrame) -> pd.DataFrame:
