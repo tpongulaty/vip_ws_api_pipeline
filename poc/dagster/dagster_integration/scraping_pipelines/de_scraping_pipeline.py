@@ -1,5 +1,6 @@
 import duckdb
 import logging
+from typing import List
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -23,10 +24,185 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+CHUNK_SIZE = int(os.getenv("DE_CHUNK_SIZE", 100))
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))          # >>> ADDED
+PROGRESS_FILE = os.path.join(THIS_DIR, "de_progress.txt")      # >>> ADDED
+
+# Initialize the Chrome WebDriver service
+service = Service(ChromeDriverManager().install())
+def _load_progress() -> int:                                   # >>> ADDED
+    try:
+        return int(open(PROGRESS_FILE).read().strip())
+    except Exception:
+        return 0
+
+def _save_progress(idx: int) -> None:                          # >>> ADDED
+    with open(PROGRESS_FILE, "w") as fh:
+        fh.write(str(idx))
+
+HEADER_DE: List[str] = []
+
+def extract_text(cell):
+    """Extracts text from a cell, replacing <br> with new lines."""
+    return cell.get_attribute('innerHTML').replace('<br>', '\n').strip()
+
+def _scrape_de_chunk(contract_numbers: List[str]) -> List[List[str]]:
+    """Scrape one batch of Delaware contract numbers"""
+    global HEADER_DE
+    url = 'https://deldot.gov/Business/ProjectStatusQuery/'
+    driver = webdriver.Chrome(service=service)
+    driver.get(url); driver.maximize_window()
+    rows: List[List[str]] = []
+    original_window = driver.window_handles[0]
+    
+    try:
+        for t,value in enumerate(contract_numbers):
+            print(f"iteration {t}th, working on {value}")
+            # Wait for the contract number input box to be present
+            state_no_input = WebDriverWait(driver, 15).until(     
+                EC.visibility_of_element_located((By.CSS_SELECTOR, '#stateNoFilter input')) 
+            ) 
+            state_no_input.send_keys(value)
+            try:
+                contract_number_link = WebDriverWait(driver, 70).until(
+                    EC.presence_of_element_located((By.LINK_TEXT, value))
+                )
+            
+                contract_number_link.click()
+            
+                # Find tables
+                info_table2 = WebDriverWait(driver, 15).until(
+                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="project-info"]/div/table[2]/tbody/tr'))
+                )
+                info_table1 = WebDriverWait(driver, 15).until(
+                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="project-info"]/div/table[1]/tbody/tr'))
+                )
+                
+                try:
+                # Extract the table headers
+                    if t == 0 or not HEADER_DE:
+                        payment_header = driver.find_element(By.XPATH, '//table[@id="paymentInfo"]/thead/tr').find_elements(By.XPATH,'.//th') 
+                        for h,header in enumerate(payment_header):
+                            if h != 1 and h != 2:
+                                HEADER_DE.append(header.get_attribute("textContent").strip())
+                            else:
+                                continue
+                        HEADER_DE = ['project_number'] + ['description'] + ['justification'] + ['advertise_date'] + ['bid_amount'] + ['bids_received_date'] + ['date_awarded'] + ['total_project_cost'] + ['first_chargeable_day'] + ['contractor'] + ['estimated_completion_date'] +['company_name']+['address']+['attorney_name']+['attorney_company_name'] + ['attorney_address'] + ['attorney_phone_num'] + ['bond_number'] + HEADER_DE+['Estimated_Cost_of_Final_Contract'] + ['Total_Estimate_to_Date'] + ['Contract_Award_Price'] + ['Auth_Retainage'] + ['Proposed_Time']+['Held_in_Securities'] + ['Time_Extended'] + ['Amt_to_be_Retained'] + ['Total_Time'] + ['Previous_Payment'] + ['Previous_time_charged']+['Liq_Damages_($/Day)'] + ['Time_Used_this_period'] + ['Time_Remaining'] + ['Misc_Deduction'] + ['Incentive_Prg(+/-)'] + ['Total_Deduction']+['Amount_this_Estimate'] # delete 'Amount_this_Estimate' later as it is same as 'Est Amt'
+                except NoSuchElementException:
+                    print(value,"Out of scope/invalid format. Re-check periodically") 
+                    driver.get(url)
+                    continue
+                
+                # Extract Total Project Cost
+                contract_info = []
+                contract_info.append(value)
+                for j, info in enumerate(info_table1):
+                    cells = info.find_elements(By.XPATH,'./td') 
+                    if j == 1 or j == 2:
+                        contract_info.append(cells[1].get_attribute('textContent'))
+
+                for c, row in enumerate(info_table2):
+                    cells = row.find_elements(By.XPATH,'./td') 
+                    if c == len(info_table2) - 1 or c == 1:
+                        contract_info.append(cells[1].get_attribute('textContent'))
+                    else: 
+                        contract_info.append(cells[1].get_attribute('textContent'))
+                        contract_info.append(cells[3].get_attribute('textContent'))
+                try:
+                    info_table_bond = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="bond-info"]/div/table/tbody/tr'))
+                    )
+                    for k, row in enumerate(info_table_bond):
+                        cells = row.find_elements(By.XPATH,'./td')
+                        if k == len(info_table_bond) - 1:
+                            contract_info.append(extract_text(cells[1]))
+                        else:
+                            contract_info.append(extract_text(cells[1]))
+                            contract_info.append(extract_text(cells[3]))
+                except TimeoutException:
+                    # Append empty values when bond information is not available to avoid assertion errors while creating data frames
+                    for i in range(7):
+                        contract_info.append(" ")    
+                    print("No Bond Information",value)
+                
+
+                # if len(contract_info) != 17:
+                #     print("check contract number data", value, i)
+                time.sleep(5) # wait for transactions to load
+                # Extract current amount
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, '//table[@ID="paymentInfo"]/tbody/tr'))
+                )
+                payment_data = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, '//table[@ID="paymentInfo"]/tbody/tr'))
+                )
+                for row in reversed(payment_data[-3:]): # Pull in the last 3 reports only
+                    current_row = []
+                    row_data = WebDriverWait(row, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, './td'))
+                    )
+                    if len(payment_data) <= 1 and len(row_data) <= 1:
+                        current_row.extend(contract_info)
+                        current_row.append("No Payment History Available")
+                        rows.append(current_row)
+                        break
+
+                    current_row.extend(contract_info)
+                    # current_row.extend([cell.get_attribute("textContent") for cell in row_data if cell.get_attribute("textContent")])
+                    for i, data in enumerate(row_data):
+                        if i == 1:
+                            header_detail_link = data.find_element(By.XPATH,'./a')
+                    current_row.extend([cell.text for cell in row_data])
+                    del current_row[19:21]
+                    header_detail_link.send_keys(Keys.CONTROL + Keys.RETURN)
+                    
+                    # change the window of the driver since new tab is opened
+                    new_window_handle = [handle for handle in driver.window_handles if handle != original_window][-1]
+                    driver.switch_to.window(new_window_handle)
+                    time.sleep(0.5) # wait for page content to be loaded properly
+                    header_detail_info = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="project-info"]/div/table/tbody/tr'))
+                    )
+                    for k, detail in enumerate(header_detail_info):
+                        cell_data = detail.find_elements(By.XPATH,'./td')
+                        # Below conditions ensure inconsistent arrangement of data elements is handled
+                        if k < 8 and k != 6:
+                            # Extract only the values not the headers
+                            current_row.append(cell_data[1].get_attribute('textContent'))
+                            current_row.append(cell_data[3].get_attribute('textContent'))
+                        elif k == 6:
+                            current_row.append(str(cell_data[1].get_attribute('textContent')) + "-" + str(cell_data[2].get_attribute('textContent')))
+                        else:
+                            current_row.append(cell_data[3].get_attribute('textContent'))
+
+                    # Go back to details page
+                    # details_page = WebDriverWait(driver, 10).until(
+                    # EC.presence_of_element_located((By.LINK_TEXT, '[Back to Details Page]'))
+                    # )
+                    rows.append(current_row)
+                    driver.close()
+                    driver.switch_to.window(original_window)
+                    # details_page.click() # go back to all estimates
+                    
+                        
+            except TimeoutException:        
+                print([value,t],"Not Found")
+
+            # except StaleElementReferenceException:
+            #     print(value,"Loading Error")
+                    
+            driver.get(url)
+    
+        
+    finally:
+        # Close the browser
+        driver.quit()
+    return rows, HEADER_DE
+    
+
 def scrape_raw_de() -> pd.DataFrame:
     # Retrieve all contract numbers
 
-    service = Service(ChromeDriverManager().install())
     # URL of the site
     url = 'https://deldot.gov/Business/ProjectStatusQuery/'
     # Start a new browser session
@@ -98,176 +274,51 @@ def scrape_raw_de() -> pd.DataFrame:
 
     # Apply filtering: Keep only rows that satisfy any of the conditions
     filtered_df = df1[(condition1 | condition2 | condition3 | condition4 | condition5)]
-    inactive_contracts_dl = filtered_df['Project_Number'].to_list()
+    inactive_contracts_de = filtered_df['Project_Number'].to_list()
     # Filter out inactive contracts for scraping
-    contract_numbers_dl_updated = [num for num in contract_numbers_del_filtered if num not in inactive_contracts_dl]
-    print(len(contract_numbers_dl_updated))
+    contract_numbers_de_updated = [num for num in contract_numbers_del_filtered if num not in inactive_contracts_de]
+    print(len(contract_numbers_de_updated))
+    
 
-    # Contract number to search for
-    contract_numbers = contract_numbers_dl_updated
+    all_rows: List[List[str]] = []
+    start_idx = _load_progress()
+    remaining = contract_numbers_de_updated[start_idx:]
+    if not remaining:
+        if os.path.exists(PROGRESS_FILE):
+            os.remove(PROGRESS_FILE)
+        return pd.DataFrame(columns=HEADER_DE)
 
-    service = Service(ChromeDriverManager().install())
+    total = len(remaining)
+    for chunk_start in range(0, total, CHUNK_SIZE):
+        chunk_end = min(chunk_start + CHUNK_SIZE, total)
+        subset   = remaining[chunk_start:chunk_end]
+        abs_start = start_idx + chunk_start
+        logging.info("[DE] chunk %s-%s", abs_start, abs_start+len(subset)-1)
 
-    # URL of the site
-    url = 'https://deldot.gov/Business/ProjectStatusQuery/'
-                        
-    contract_numbers = contract_numbers_dl_updated
+        try:
+            rows, _ = _scrape_de_chunk(subset)
+            chunk_df = pd.DataFrame(data=rows, columns=HEADER_DE)
+            all_rows.extend(rows)
+            _save_progress(start_idx + chunk_end)
 
-    # Start a new browser session
-    driver = webdriver.Chrome(service=service)
-    driver.get(url)
-    driver.maximize_window()
-    row_data_list_del = []
-    header_data_del = []
-    original_window = driver.window_handles[0]
+        except Exception as exc:
+            logging.exception("[DE] chunk failed: flushing & retrying", exc_info=exc)
+            if all_rows:
+                tmp_df = pd.DataFrame(all_rows, columns=HEADER_DE)
+                transform_and_load_de(tmp_df)   # <-- flush only on failure
+            _save_progress(start_idx + chunk_start)
+            driver.quit()
+            raise
 
-    def extract_text(cell):
-                        """Extracts text from a cell, replacing <br> with new lines."""
-                        return cell.get_attribute('innerHTML').replace('<br>', '\n').strip()
-    try:
-        for t,value in enumerate(contract_numbers):
-            print(f"iteration {t}th, working on {value}")
-            # Wait for the contract number input box to be present
-            state_no_input = WebDriverWait(driver, 15).until(     
-                EC.visibility_of_element_located((By.CSS_SELECTOR, '#stateNoFilter input')) 
-            ) 
-            state_no_input.send_keys(value)
-            try:
-                contract_number_link = WebDriverWait(driver, 70).until(
-                    EC.presence_of_element_located((By.LINK_TEXT, value))
-                )
-            
-                contract_number_link.click()
-            
-                # Find tables
-                info_table2 = WebDriverWait(driver, 15).until(
-                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="project-info"]/div/table[2]/tbody/tr'))
-                )
-                info_table1 = WebDriverWait(driver, 15).until(
-                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="project-info"]/div/table[1]/tbody/tr'))
-                )
-                
-                try:
-                # Extract the table headers
-                    if t == 0 or not header_data_del:
-                        payment_header = driver.find_element(By.XPATH, '//table[@id="paymentInfo"]/thead/tr').find_elements(By.XPATH,'.//th') 
-                        for h,header in enumerate(payment_header):
-                            if h != 1 and h != 2:
-                                header_data_del.append(header.get_attribute("textContent").strip())
-                            else:
-                                continue
-                        header_data_del = ['project_number'] + ['description'] + ['justification'] + ['advertise_date'] + ['bid_amount'] + ['bids_received_date'] + ['date_awarded'] + ['total_project_cost'] + ['first_chargeable_day'] + ['contractor'] + ['estimated_completion_date'] +['company_name']+['address']+['attorney_name']+['attorney_company_name'] + ['attorney_address'] + ['attorney_phone_num'] + ['bond_number'] + header_data_del+['Estimated_Cost_of_Final_Contract'] + ['Total_Estimate_to_Date'] + ['Contract_Award_Price'] + ['Auth_Retainage'] + ['Proposed_Time']+['Held_in_Securities'] + ['Time_Extended'] + ['Amt_to_be_Retained'] + ['Total_Time'] + ['Previous_Payment'] + ['Previous_time_charged']+['Liq_Damages_($/Day)'] + ['Time_Used_this_period'] + ['Time_Remaining'] + ['Misc_Deduction'] + ['Incentive_Prg(+/-)'] + ['Total_Deduction']+['Amount_this_Estimate'] # delete 'Amount_this_Estimate' later as it is same as 'Est Amt'
-                except NoSuchElementException:
-                    print(value,"Out of scope/invalid format. Re-check periodically") 
-                    driver.get(url)
-                    continue
-                
-                # Extract Total Project Cost
-                contract_info = []
-                contract_info.append(value)
-                for j, info in enumerate(info_table1):
-                    cells = info.find_elements(By.XPATH,'./td') 
-                    if j == 1 or j == 2:
-                        contract_info.append(cells[1].get_attribute('textContent'))
+    driver.quit()
+    if os.path.exists(PROGRESS_FILE):
+        os.remove(PROGRESS_FILE)
 
-                for c, row in enumerate(info_table2):
-                    cells = row.find_elements(By.XPATH,'./td') 
-                    if c == len(info_table2) - 1 or c == 1:
-                        contract_info.append(cells[1].get_attribute('textContent'))
-                    else: 
-                        contract_info.append(cells[1].get_attribute('textContent'))
-                        contract_info.append(cells[3].get_attribute('textContent'))
-                try:
-                    info_table_bond = WebDriverWait(driver, 10).until(
-                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="bond-info"]/div/table/tbody/tr'))
-                    )
-                    for k, row in enumerate(info_table_bond):
-                        cells = row.find_elements(By.XPATH,'./td')
-                        if k == len(info_table_bond) - 1:
-                            contract_info.append(extract_text(cells[1]))
-                        else:
-                            contract_info.append(extract_text(cells[1]))
-                            contract_info.append(extract_text(cells[3]))
-                except TimeoutException:
-                    # Append empty values when bond information is not available to avoid assertion errors while creating data frames
-                    for i in range(7):
-                        contract_info.append(" ")    
-                    print("No Bond Information",value)
-                
+    de_dot_data = pd.DataFrame(all_rows, columns=HEADER_DE)
+    return de_dot_data
+    
 
-                # if len(contract_info) != 17:
-                #     print("check contract number data", value, i)
-                time.sleep(5) # wait for transactions to load
-                # Extract current amount
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_all_elements_located((By.XPATH, '//table[@ID="paymentInfo"]/tbody/tr'))
-                )
-                payment_data = WebDriverWait(driver, 10).until(
-                    EC.presence_of_all_elements_located((By.XPATH, '//table[@ID="paymentInfo"]/tbody/tr'))
-                )
-                for row in reversed(payment_data[-3:]): # Pull in the last 3 reports only
-                    current_row = []
-                    row_data = WebDriverWait(row, 10).until(
-                    EC.presence_of_all_elements_located((By.XPATH, './td'))
-                    )
-                    if len(payment_data) <= 1 and len(row_data) <= 1:
-                        current_row.extend(contract_info)
-                        current_row.append("No Payment History Available")
-                        row_data_list_del.append(current_row)
-                        break
-
-                    current_row.extend(contract_info)
-                    # current_row.extend([cell.get_attribute("textContent") for cell in row_data if cell.get_attribute("textContent")])
-                    for i, data in enumerate(row_data):
-                        if i == 1:
-                            header_detail_link = data.find_element(By.XPATH,'./a')
-                    current_row.extend([cell.text for cell in row_data])
-                    del current_row[19:21]
-                    header_detail_link.send_keys(Keys.CONTROL + Keys.RETURN)
-                    
-                    # change the window of the driver since new tab is opened
-                    new_window_handle = [handle for handle in driver.window_handles if handle != original_window][-1]
-                    driver.switch_to.window(new_window_handle)
-                    time.sleep(0.5) # wait for page content to be loaded properly
-                    header_detail_info = WebDriverWait(driver, 10).until(
-                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="project-info"]/div/table/tbody/tr'))
-                    )
-                    for k, detail in enumerate(header_detail_info):
-                        cell_data = detail.find_elements(By.XPATH,'./td')
-                        # Below conditions ensure inconsistent arrangement of data elements is handled
-                        if k < 8 and k != 6:
-                            # Extract only the values not the headers
-                            current_row.append(cell_data[1].get_attribute('textContent'))
-                            current_row.append(cell_data[3].get_attribute('textContent'))
-                        elif k == 6:
-                            current_row.append(str(cell_data[1].get_attribute('textContent')) + "-" + str(cell_data[2].get_attribute('textContent')))
-                        else:
-                            current_row.append(cell_data[3].get_attribute('textContent'))
-
-                    # Go back to details page
-                    # details_page = WebDriverWait(driver, 10).until(
-                    # EC.presence_of_element_located((By.LINK_TEXT, '[Back to Details Page]'))
-                    # )
-                    row_data_list_del.append(current_row)
-                    driver.close()
-                    driver.switch_to.window(original_window)
-                    # details_page.click() # go back to all estimates
-                    
-                        
-            except TimeoutException:        
-                print([value,t],"Not Found")
-
-            # except StaleElementReferenceException:
-            #     print(value,"Loading Error")
-                    
-            driver.get(url)
-
-        
-    finally:
-        # Close the browser
-        driver.quit()
-    del_dot_data = pd.DataFrame(data=row_data_list_del, columns = header_data_del)
-    return del_dot_data
+    
 
 def transform_and_load_de(del_dot_data: pd.DataFrame) -> pd.DataFrame:
     # POST PROCESSING

@@ -1,6 +1,7 @@
 import duckdb
 import logging
 import pandas as pd
+from typing import List
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import Select
@@ -13,40 +14,45 @@ from datetime import datetime
 import pytz
 import time
 import os
+from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
+
 # Load environment variables from .env file
 load_dotenv()
 
-from webdriver_manager.chrome import ChromeDriverManager
+# Automatic driver installer
+service = Service(ChromeDriverManager().install())
+THIS_DIR      = os.path.dirname(os.path.abspath(__file__))
+CHUNK_SIZE: int    = int(os.getenv("OK_CHUNK_SIZE", 100))  # Default chunk size is set to 100 if not specified in the environment variable
+PROGRESS_FILE: str = os.path.join(THIS_DIR, "ok_progress.txt")
 
-def scrape_raw_ok() -> pd.DataFrame: 
-    # Automatic driver installer
-    service = Service(ChromeDriverManager().install())
+HEADER_OK: List[str] = ["contract_id", "payment_number","date_let","ntp_eff_date","pay_period","date_awarded","date_work_began","org_cont_time","date_cont_executed","date_time_stopped","current_time_charged","date_ntp_issued",
+                    "completion_date","current_time_allowed","general_liability_exp","workman_comp_exp","percent_time_used","spec_year","date_approved","bid_amount","funds_available_bid_co","percent_complete",
+                    "unearned_balance", "total_to_date","prev_to_date","this_estimate", "project_numbers", "primary_job_num", "cont_desp","primary_county","road_name","prime_cont","surety_company"]
+
+def _load_progress() -> int:
+    try:
+        return int(open(PROGRESS_FILE).read().strip())
+    except Exception:
+        return 0
+
+
+def _save_progress(idx: int) -> None:
+    with open(PROGRESS_FILE, "w") as fh:
+        fh.write(str(idx))
+    logging.info("[OK] progress pointer → %s", idx)
+
+def _scrape_ok_chunk(contract_numbers: List[str]) -> List[List[str]]:
+    rows: List[List[str]] = [] 
     # URL of the site
     url = 'https://www.odot.org/CONTRACTADMIN/ESTIMATES/'
- 
-    bulk_contracts = True
-    contract_numbers = []
+
     # Start a new browser session
     driver = webdriver.Chrome(service=service)
     driver.get(url)
     original_window = driver.window_handles[0]
-    row_data_list_ok = []
-    header_data_ok = ["contract_id", "payment_number","date_let","ntp_eff_date","pay_period","date_awarded","date_work_began","org_cont_time","date_cont_executed","date_time_stopped","current_time_charged","date_ntp_issued",
-                    "completion_date","current_time_allowed","general_liability_exp","workman_comp_exp","percent_time_used","spec_year","date_approved","bid_amount","funds_available_bid_co","percent_complete",
-                    "unearned_balance", "total_to_date","prev_to_date","this_estimate", "project_numbers", "primary_job_num", "cont_desp","primary_county","road_name","prime_cont","surety_company"]
-
+    
     try:
-        if bulk_contracts:
-            all_contracts = WebDriverWait(driver, 10).until(
-                EC.presence_of_all_elements_located((By.XPATH, '//*[@id="main"]/div/a'))
-            )
-            all_contracts_list = []
-            for row in all_contracts:
-                all_contracts_list.append(row.text)
-            contract_numbers = all_contracts_list
-        elif not bulk_contracts:
-            contract_numbers = contract_numbers
 
         for i,value in enumerate(contract_numbers):
             
@@ -132,7 +138,7 @@ def scrape_raw_ok() -> pd.DataFrame:
                         if len(current_data) != 33:
                             print("check data for contract id", value)
                         else:
-                            row_data_list_ok.extend([current_data])
+                            rows.append(current_data)
                         driver.close()
                         driver.switch_to.window(original_window)
                         report_counter += 1
@@ -149,8 +155,64 @@ def scrape_raw_ok() -> pd.DataFrame:
     finally:
         # Close the browser
         driver.quit()
+    return rows
+
+def scrape_raw_ok() -> pd.DataFrame:
+    url = 'https://www.odot.org/CONTRACTADMIN/ESTIMATES/'
+ 
+    contract_numbers = []
+    # Start a new browser session
+    driver = webdriver.Chrome(service=service)
+    try:
+        driver.get(url) 
+        bulk_contracts = True
+        if bulk_contracts:
+                all_contracts = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.XPATH, '//*[@id="main"]/div/a'))
+                )
+                all_contracts_list = []
+                for row in all_contracts:
+                    all_contracts_list.append(row.text)
+                contract_numbers = all_contracts_list
+        elif not bulk_contracts:
+            contract_numbers = contract_numbers
+    finally:
+        driver.quit()
+    all_rows: List[List[str]] = []
+    start_idx = _load_progress()
+    remaining = contract_numbers[start_idx:]
+
+    if not remaining:
+        if os.path.exists(PROGRESS_FILE): os.remove(PROGRESS_FILE)
+        return pd.DataFrame(columns=HEADER_OK)
+
+    total = len(remaining)
+    for chunk_start in range(0, total, CHUNK_SIZE):
+        chunk_end  = min(chunk_start + CHUNK_SIZE, total)
+        subset     = remaining[chunk_start:chunk_end]
+        abs_start  = start_idx + chunk_start
+        logging.info("[OK] chunk %s-%s", abs_start, abs_start+len(subset)-1)
+
+        try:
+            rows = _scrape_ok_chunk(subset)
+            chunk_df = pd.DataFrame(rows, columns=HEADER_OK)
+            all_rows.extend(rows)
+            _save_progress(start_idx + chunk_end)
+
+        except Exception as exc:
+            logging.exception("[OK] chunk failed: flushing & retrying", exc_info=exc)
+            if all_rows:
+                tmp_df = pd.DataFrame(all_rows, columns=HEADER_OK)
+                transform_and_load_ok(tmp_df)  
+            _save_progress(start_idx + chunk_start)
+            raise
+
+    
+    if os.path.exists(PROGRESS_FILE): 
+        os.remove(PROGRESS_FILE)
+
     # Create a dataframe   
-    ok_dot_data = pd.DataFrame(data=row_data_list_ok, columns = header_data_ok)
+    ok_dot_data = pd.DataFrame(data=all_rows, columns = HEADER_OK)
     return ok_dot_data
 
 def transform_and_load_ok(ok_dot_data: pd.DataFrame) -> pd.DataFrame:

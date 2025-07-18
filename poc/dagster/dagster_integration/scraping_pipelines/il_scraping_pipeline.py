@@ -1,6 +1,6 @@
-import re
 import os
 import time
+from typing import List
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -12,7 +12,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import ElementClickInterceptedException
-from selenium.webdriver.common.keys import Keys
 from datetime import datetime
 import pytz
 import logging
@@ -20,82 +19,34 @@ import duckdb
 from dotenv import load_dotenv
 
 load_dotenv()
+service = Service(ChromeDriverManager().install())
+print(os.getenv("IL_CHUNK_SIZE"))
+CHUNK_SIZE: int = int(os.getenv("IL_CHUNK_SIZE"))          # >>> ADDED
+def create_progress_file():
+    THIS_DIR = os.path.dirname(os.path.abspath(__file__))          # >>> ADDED
+    PROGRESS_FILE = os.path.join(THIS_DIR, "il_progress.txt") 
+    return PROGRESS_FILE     # >>> CHANGED
+def _load_progress(PROGRESS_FILE: str) -> int:                                    # >>> ADDED
+    """Read index of first unprocessed contract (0 if none)."""
+    try:                   # >>> ADDED
+        return int(open(PROGRESS_FILE).read().strip())
+    except Exception:
+        return 0
 
-def scrape_raw_il() -> pd.DataFrame:
-    # Retrieve contract numbers
-    # WebDriver Manager will handle everything automatically
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service)
-    # URL of the site
-    url = 'https://apps1.dot.illinois.gov/WCP/PEstimate/PEstimateSearch'
+def _save_progress(idx: int, PROGRESS_FILE: str) -> None:
+    logging.info("Saving IL progress pointer %s to %s", idx, PROGRESS_FILE)                          # >>> ADDED
+    with open(PROGRESS_FILE, "w") as fh:
+        fh.write(str(idx))
 
-    contract_numbers_il = []
-    driver = webdriver.Chrome(service=service)
-    driver.get(url)
-    driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized
-
-    try:
-        time.sleep(10)
-        wait = WebDriverWait(driver, 20)
-        contract_num_button = wait.until(
-            EC.visibility_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div[1]/div/div/form[2]/div/div[2]/span/button'))
-        )
-        contract_num_button.click()
-
-        contract_num_list = wait.until(
-            EC.presence_of_all_elements_located((By.XPATH, '/html/body/div[4]/div/div/div[2]/ul/li'))
-        )
-
-        for i, row in enumerate(contract_num_list):
-            number = row.get_attribute("textContent")
-            contract_numbers_il.append(number)
-
-    finally:
-        driver.quit()
-
+def _scrape_il_chunk(contract_numbers: List[str]) -> List[List[str]]:  # >>> ADDED
     # Get associated Contract information
     driver = webdriver.Chrome(service=service)
     # URL of the site
     url = 'https://apps1.dot.illinois.gov/WCP/'
-
-
-    # Create connection to duckdb table
-    db_file = r"C:\Users\TarunPongulaty\Documents\Revealgc\Reveal_Census - databases\Tarun\dot_scraping\Illinois\data_store_IL.duckdb"
-    con = duckdb.connect(db_file)
-    # Load existing data from DuckDB
-    existing_data = con.execute(f"SELECT * FROM IL_DOT").df()
-    con.close()
-    df1 = existing_data.drop_duplicates(subset=["Contract_Number"], keep='first')
-
-    # Convert 'Payment_Date' to datetime format
-    df1['Payment_Date'] = pd.to_datetime(df1['Payment_Date'], format='%m/%d/%Y', errors='coerce')
-
-    # Convert 'Percent_Complete' to numeric format (remove '%' and convert to float)
-    df1['Payment_Total_Percent'] = df1['Payment_Total_Percent'].str.rstrip('%').astype(float)
-
-    # Define the filter conditions
-    condition1 = (df1['Payment_Date'].dt.year <= 2024) & (df1['Payment_Total_Percent'] >= 100)
-    condition2 = (df1['Payment_Date'].dt.year <= 2023) & (df1['Payment_Total_Percent'] >= 95)
-    condition3 = df1['Payment_Date'].dt.year <= 2021
-
-    # Apply filtering: Keep only rows that satisfy any of the conditions
-    filtered_df = df1[(condition1 | condition2 | condition3)]
-    inactive_contracts = filtered_df['Contract_Number'].to_list()
-    # Filter out inactive contracts for scraping
-    contract_numbers_il_updated = [num for num in contract_numbers_il if num not in inactive_contracts]
-    print(len(contract_numbers_il_updated))
-
-    # Contract number to search for
-    contract_numbers = contract_numbers_il_updated # Modify this to scrape all contracts in specific chunks as scraping all the contracts can crash the browser   
     # Start a new browser session
     driver.get(url)
-    driver.maximize_window() 
-    row_data_list_il = []
-    header_data_il = ["percent_completed", "current_report","from_date", "to_date", "Contract_Awarded_Amount", "Additions",
-                    "Deductions", "Total_Adjusted_Contract_Value", "Total_Amount_Due_to_Date", "Payment_Number", "total", "contract_number",
-                    "state_job", "dot_vendor", "district/county", "il_project", "letting_date", "route", "airport/section", "section",
-                    "project", "payee", "scope"]
-
+    driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized 
+    rows: List[List[str]] = []
     try:
         wait = WebDriverWait(driver, 100)
         for i,value in enumerate(contract_numbers):
@@ -179,7 +130,7 @@ def scrape_raw_il() -> pd.DataFrame:
                         current_data.append(payment_number.text)
                         current_data.append(Total.text)
                         combined_data = current_data + contract_info
-                        row_data_list_il.extend([combined_data])      
+                        rows.append(combined_data)
                         report_counter += 1
 
                 except ElementClickInterceptedException:
@@ -197,8 +148,106 @@ def scrape_raw_il() -> pd.DataFrame:
     # Close the browser
     finally:
         driver.quit()
-    il_dot_data = pd.DataFrame(data=row_data_list_il, columns = header_data_il)
+    return rows
+
+def scrape_raw_il() -> pd.DataFrame:
+    # Retrieve contract numbers
+    # WebDriver Manager will handle everything automatically
+    driver = webdriver.Chrome(service=service)
+    # URL of the site
+    url = 'https://apps1.dot.illinois.gov/WCP/PEstimate/PEstimateSearch'
+    driver.get(url)
+    driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized
+    contract_numbers_il: List[str] = []
+    try:
+        time.sleep(10)
+        wait = WebDriverWait(driver, 20)
+        contract_num_button = wait.until(
+            EC.visibility_of_element_located((By.XPATH, '/html/body/div[1]/div[2]/div[1]/div/div/form[2]/div/div[2]/span/button'))
+        )
+        contract_num_button.click()
+
+        contract_num_list = wait.until(
+            EC.presence_of_all_elements_located((By.XPATH, '/html/body/div[4]/div/div/div[2]/ul/li'))
+        )
+
+        for i, row in enumerate(contract_num_list):
+            number = row.get_attribute("textContent")
+            contract_numbers_il.append(number)
+
+    finally:
+        driver.quit()
+
+    # Create connection to duckdb table
+    db_path = os.getenv("DB_PATH")
+    db_file = rf"{db_path}\Illinois\data_store_IL.duckdb"
+    con = duckdb.connect(db_file)
+    # Load existing data from DuckDB
+    existing_data = con.execute(f"SELECT * FROM IL_DOT").df()
+    con.close()
+    df1 = existing_data.drop_duplicates(subset=["Contract_Number"], keep='first')
+
+    # Convert 'Payment_Date' to datetime format
+    df1['Payment_Date'] = pd.to_datetime(df1['Payment_Date'], format='%m/%d/%Y', errors='coerce')
+
+    # Convert 'Percent_Complete' to numeric format (remove '%' and convert to float)
+    df1['Payment_Total_Percent'] = df1['Payment_Total_Percent'].str.rstrip('%').astype(float)
+
+    # Define the filter conditions
+    condition1 = (df1['Payment_Date'].dt.year <= 2024) & (df1['Payment_Total_Percent'] >= 100)
+    condition2 = (df1['Payment_Date'].dt.year <= 2023) & (df1['Payment_Total_Percent'] >= 95)
+    condition3 = df1['Payment_Date'].dt.year <= 2021
+
+    # Apply filtering: Keep only rows that satisfy any of the conditions
+    filtered_df = df1[(condition1 | condition2 | condition3)]
+    inactive_contracts = filtered_df['Contract_Number'].to_list()
+    # Filter out inactive contracts for scraping
+    contract_numbers_il_updated = [num for num in contract_numbers_il if num not in inactive_contracts]
+    print(len(contract_numbers_il_updated))
+    contract_numbers_il_updated = contract_numbers_il_updated[10:22] # remove this after testing
+    # Contract number to search for
+    # contract_numbers = contract_numbers_il_updated # Modify this to scrape all contracts in specific chunks as scraping all the contracts can crash the browser   
+    # ③ Process in chunks with resume ----------------------------------------
+    PROGRESS_FILE = create_progress_file()
+    start_idx = _load_progress(PROGRESS_FILE)                                   # >>> ADDED
+    remaining = contract_numbers_il_updated[start_idx:]
+    if not remaining:
+        if os.path.exists(PROGRESS_FILE):
+            os.remove(PROGRESS_FILE)
+        return pd.DataFrame()
+
+    all_rows: List[List[str]] = []
+    total = len(remaining)
+    header_data_il = ["percent_completed", "current_report","from_date", "to_date", "Contract_Awarded_Amount", "Additions",
+                    "Deductions", "Total_Adjusted_Contract_Value", "Total_Amount_Due_to_Date", "Payment_Number", "total", "contract_number",
+                    "state_job", "dot_vendor", "district/county", "il_project", "letting_date", "route", "airport/section", "section",
+                    "project", "payee", "scope"]
+    for chunk_start in range(0, total, CHUNK_SIZE):
+        print(CHUNK_SIZE)
+        chunk_end = min(chunk_start + CHUNK_SIZE, total)
+        chunk_nums = remaining[chunk_start:chunk_end]
+        abs_start = start_idx + chunk_start
+        logging.info(f"[IL] chunk {abs_start}-{abs_start + len(chunk_nums)-1}")
+        try:
+            rows = _scrape_il_chunk(chunk_nums)          # >>> ADDED helper above
+            chunk_df = pd.DataFrame(data=rows, columns=header_data_il) # Ensures there is no mismatch in columns
+            all_rows.extend(rows)
+            _save_progress(start_idx + chunk_end, PROGRESS_FILE)                 # >>> ADDED
+        except Exception as exc:
+            logging.exception("[IL] chunk failed: will retry next run", exc_info=exc)
+            if all_rows:  # If we have some rows, load them to DB andsave progress
+                tmp_df = pd.DataFrame(all_rows, columns=header_data_il)
+                transform_and_load_il(tmp_df)
+            _save_progress(start_idx + chunk_start, PROGRESS_FILE)
+            raise
+
+    if os.path.exists(PROGRESS_FILE):
+        os.remove(PROGRESS_FILE)
+
+    # row_data_list_il = []
+    il_dot_data = pd.DataFrame(data=all_rows, columns = header_data_il)
     return il_dot_data
+    
 
 def transform_and_load_il(il_dot_data: pd.DataFrame) -> pd.DataFrame:
     #Remove unnecessary columns
@@ -286,7 +335,7 @@ def transform_and_load_il(il_dot_data: pd.DataFrame) -> pd.DataFrame:
     Payment_Total_Percent  TEXT,
     Payment_Balance  DOUBLE,
     Pull_Date_Initial TEXT,
-    Payment_Amount_Percent FLOAT,
+    Payment_Amount_Percent FLOAT
     )
     """)
 

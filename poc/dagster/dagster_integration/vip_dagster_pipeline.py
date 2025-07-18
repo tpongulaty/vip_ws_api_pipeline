@@ -23,6 +23,7 @@ from dagster import (
 )
 from dagster._core.events import DagsterEventType
 from dagster._core.storage.event_log.base import EventRecordsFilter
+from dagster import RetryPolicy 
 from dagster_pandas import DataFrame
 from dotenv import load_dotenv
 from scraping_pipelines.wv_scraping_pipeline import scrape_raw_wv, transform_and_load_wv, data_appended_wv
@@ -47,8 +48,12 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 # ─────────────────── Asset layer (partitioned) ─────────────
 STATES = ["wv", "ok", "ga", "wa", "de", "il","la","ny"]  # List of states to automate
 partitions_def = StaticPartitionsDefinition(STATES)
+RETRY_POLICY = RetryPolicy(
+    max_retries=2,  # Retry up to 2 times
+    delay=30,  # Wait 30 seconds between retries
+)
 
-@asset(partitions_def=partitions_def, key_prefix=["dot_data"])
+@asset(partitions_def=partitions_def, key_prefix=["dot_data"],retry_policy=RETRY_POLICY)
 def raw_data(context) -> pd.DataFrame:
     state = context.partition_key
     if state not in STATES:
@@ -73,7 +78,10 @@ def raw_data(context) -> pd.DataFrame:
             "row_count": len(df),                      # optional extras
         }
     )
-    return df, df_sub if state in ["ny", "la"] else None
+    if state in {"ny", "la"}:
+        return (df, df_sub)     # tuple only for the two special cases
+    else:
+        return df               # DataFrame everywhere else
 
 @asset(
     partitions_def=partitions_def,
@@ -112,7 +120,10 @@ def combined_data(context, raw_data) -> pd.DataFrame:
             "row_count": len(df_combined),
         }
     )
-    return df_combined, df_combined_sub if state in ["ny", "la"] else None
+    if state in {"ny", "la"}:
+        return df_combined, df_combined_sub
+    else:
+        return df_combined
 
 @asset(
     partitions_def=partitions_def,
@@ -142,7 +153,10 @@ def appended_data(context, combined_data) -> pd.DataFrame:
             "row_count": len(appended_data),
         }
     )
-    return appended_data, appended_data_sub if state == "la" else None
+    if state == "la":
+        return appended_data, appended_data_sub
+    else:
+        return appended_data
 
 # ────────────── export + email ops  ─────────────
 @op(config_schema={"state": Field(str)})
@@ -188,14 +202,49 @@ asset_job = define_asset_job(
     executor_def=in_process_executor,
 )
 jobs.append(asset_job)
-schedules.append(
-    build_schedule_from_partitioned_job(
-        name="dot_assets_schedule",
-        job=asset_job,
-        cron_schedule="0 08 22,L * *",
+# schedules.append(
+#     build_schedule_from_partitioned_job(
+#         name="dot_assets_schedule",
+#         job=asset_job,
+#         cron_schedule="0 08 22,L * *",
+#         execution_timezone="US/Eastern",
+#     )
+# ) # old common schedule for all states
+
+# a job for each state, with its own schedule
+# this is the preferred way to do it, as it allows for staggered execution
+# helper → asset‑job for exactly ONE partition
+# helper → schedule that always runs ONE partition
+def make_state_schedule(state: str, cron: str):
+    # will be invoked by Dagster when the cron fires
+    def _execution_fn(context, key=state):
+        # ask the job to build its RunRequest for that key
+        return [asset_job.run_request_for_partition(context, partition_key=key)]
+        # (asset_job is your all‑states job defined above)
+
+    return ScheduleDefinition(
+        name=f"{state}_assets_schedule",
+        cron_schedule=cron,
+        job=asset_job,                   # the job with all 8 partitions
         execution_timezone="US/Eastern",
+        execution_fn=_execution_fn,     
     )
-)
+
+# staggered cron strings
+CRONS = {
+    "wv": "0 8 25 * *",
+    "ok": "30 8 25 * *",
+    "ga": "0 9 25 * *",
+    "wa": "30 9 25 * *",
+    "de": "0 10 25 * *",
+    "il": "30 10 25 * *",
+    "la": "0 5 25 * *",
+    "ny": "30 5 25 * *",
+}
+
+# create schedules
+for st in STATES:
+    schedules.append(make_state_schedule(st, CRONS[st]))
 
 POST_JOBS = {}
 # per-state post-process jobs
