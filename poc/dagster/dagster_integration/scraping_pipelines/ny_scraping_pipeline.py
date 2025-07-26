@@ -10,7 +10,6 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException
-import time
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -274,7 +273,7 @@ def transform_and_load_ny(ny_bulk: pd.DataFrame, ny_amendment: pd.DataFrame) -> 
                         'TRANSACTION APPROVED/FILED DATE':'Transaction_Approved/Filed_Date'}, inplace=True)
     return combined_data, ny_amendment
 
-def data_appended_ny(combined_data: pd.DataFrame) -> pd.DataFrame: # Fetch the data appended in the current run
+def data_appended_ny(combined_data, ny_amendment=None) -> pd.DataFrame: # Fetch the data appended in the current run
     EST = pytz.timezone('US/Eastern')
     now = datetime.now(EST)
     current_date = now.strftime("%m/%d/%Y")

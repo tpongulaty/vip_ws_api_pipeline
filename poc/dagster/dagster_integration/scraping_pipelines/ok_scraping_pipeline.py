@@ -203,7 +203,8 @@ def scrape_raw_ok() -> pd.DataFrame:
             logging.exception("[OK] chunk failed: flushing & retrying", exc_info=exc)
             if all_rows:
                 tmp_df = pd.DataFrame(all_rows, columns=HEADER_OK)
-                transform_and_load_ok(tmp_df)  
+                transform_and_load_ok(tmp_df)
+                print("Executed transform_and_load_ok() for the last successful chunk.")
             _save_progress(start_idx + chunk_start)
             raise
 

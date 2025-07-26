@@ -201,6 +201,7 @@ def scrape_raw_wa() -> pd.DataFrame:
             if all_rows and HEADER_WA:
                 tmp_df = pd.DataFrame(all_rows, columns=HEADER_WA)
                 transform_and_load_wa(tmp_df)  # unchanged
+                print("Executed transform_and_load_wa() for the last successful chunk.")
             _save_progress(start_idx + chunk_start)
             raise
 

@@ -1,5 +1,6 @@
-import os, logging, datetime as dt, smtplib, pandas as pd
-import pytz, datetime
+import os, logging, smtplib, pandas as pd
+import pytz
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dagster import (
@@ -54,7 +55,7 @@ RETRY_POLICY = RetryPolicy(
 )
 
 @asset(partitions_def=partitions_def, key_prefix=["dot_data"],retry_policy=RETRY_POLICY)
-def raw_data(context) -> pd.DataFrame:
+def raw_data(context):
     state = context.partition_key
     if state not in STATES:
         raise NotImplementedError(f"Scraper for {state} not implemented")
@@ -88,7 +89,7 @@ def raw_data(context) -> pd.DataFrame:
     ins={"raw_data": AssetIn()},
     key_prefix=["dot_data"],
 )
-def combined_data(context, raw_data) -> pd.DataFrame:
+def combined_data(context, raw_data):
     state = context.partition_key
     if state not in STATES:
         raise NotImplementedError(f"Scraper for {state} not implemented")
@@ -120,7 +121,7 @@ def combined_data(context, raw_data) -> pd.DataFrame:
             "row_count": len(df_combined),
         }
     )
-    if state in {"ny", "la"}:
+    if state in {"ny","la"}:
         return df_combined, df_combined_sub
     else:
         return df_combined
@@ -130,7 +131,7 @@ def combined_data(context, raw_data) -> pd.DataFrame:
     ins={"combined_data": AssetIn()},
     key_prefix=["dot_data"],
 )
-def appended_data(context, combined_data) -> pd.DataFrame:
+def appended_data(context, combined_data):
     state = context.partition_key
     if state not in STATES:
         raise NotImplementedError
@@ -144,6 +145,8 @@ def appended_data(context, combined_data) -> pd.DataFrame:
             "preview": MetadataValue.md(preview_md_sub),
             "row_count": len(appended_data_sub),
         })
+    elif state == "ny":
+        appended_data = globals()[f"data_appended_{state}"](combined_data[0])
     else:
         appended_data = globals()[f"data_appended_{state}"](combined_data)
     # Add metadata for preview
@@ -173,7 +176,7 @@ def export_csv(context) -> str:
         sub_table_name = f"{table_name}_sub"
         sub_path, sub_file_name = export_duckdb_to_csv(folder, duckdb_file, sub_table_name, f"{state}_sub_bulk_pipeline_vip")
         MFTClient.mft_file(sub_path, sub_file_name)
-    return path, sub_path if state == "la" else None
+    return path
 
 @op(config_schema={"subject": Field(str), "body": Field(str)})
 def notify(context, exported_path: str):
@@ -257,7 +260,7 @@ for state in STATES:
                 "notify": {
                     "config": {
                         "subject": f"{state} DOT Pipeline Success",
-                        "body":    f"{state} pipeline finished {dt.datetime.now():%Y-%m-%d %H:%M}",
+                        "body":    f"{state} pipeline finished {datetime.now():%Y-%m-%d %H:%M}",
                     }
                 },
             }
