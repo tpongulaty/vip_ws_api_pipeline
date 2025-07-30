@@ -68,7 +68,7 @@ def _scrape_la_chunk(contract_numbers: List[str]) -> List[List[str]]:
             # Submit the search form
             try: 
                 project_key = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.NAME, 'proj_key'))
+                    EC.presence_of_element_located((By.XPATH, '/html/body/ul/li/form/input[2]'))
                 )
                 project_key.click()
 
@@ -157,7 +157,8 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
          
         set_records = driver.find_element(By.XPATH, '//*[@id="company_length"]/label/select/option[4]')
         set_records.click()
-        table = WebDriverWait(driver, 10).until(
+        # Wait for the table to load
+        WebDriverWait(driver, 10).until(
             EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]'))
         )
             
@@ -167,6 +168,10 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
             ) 
             
         while "disabled" not in next_page_button.get_attribute("class"):
+            # Ensure the table is loaded before extracting data and to avoid stale element reference
+            WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.XPATH, '//*[@id="company"]'))
+            )
             WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "company_wrapper"))
             )
@@ -195,7 +200,6 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
                     row_data = driver.find_elements(By.XPATH, './td')
                     row_data_list_la_sub.extend([cell.get_attribute("textContent") for cell in row_data[:1]])
 
-
     finally:
         # Close the browser
         driver.quit()
@@ -214,7 +218,7 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
     LA_city_data_sub['work_value'] = LA_city_data_sub['work_value'].apply(parse_money)
     # Calculate 'Project_Cost_Total' by summing 'work_value'
     LA_city_data_sub['Project_Cost_Total'] = LA_city_data_sub[LA_city_data_sub['work_value'] >= 0].groupby('work_order')['work_value'].transform('sum')
-    contract_numbers_list_la = LA_city_data_sub["work_order"].unique()
+    contract_numbers_list_la = LA_city_data_sub["work_order"].unique().tolist()
     print("Total Contracts:",len(contract_numbers_list_la))
     contract_numbers = contract_numbers_list_la
 
@@ -242,6 +246,7 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
             if all_rows and HEADER_LA:  # If we have some rows, load them to DB andsave progress
                 tmp_df = pd.DataFrame(all_rows, columns=HEADER_LA)
                 transform_and_load_la(tmp_df, LA_city_data_sub)  # Load the data to DuckDB
+                print("Executed transform_and_load_la() for the last successful chunk.")
             _save_progress(start_idx + chunk_start)
             raise
 

@@ -113,6 +113,8 @@ def combined_data(context, raw_data):
             current_year = now.year
             current_month = now.strftime('%b') # e.g., 'Jan', 'Feb', etc.
             df_combined_sub.to_csv(rf"{ny_amendment_path}\ny_amendment_bulk_pipeline_vip_{current_month}_{current_year}.csv", index=False)
+            ny_amendment_path_full = rf"{ny_amendment_path}\ny_amendment_bulk_pipeline_vip_{current_month}_{current_year}.csv"
+            MFTClient.mft_file(ny_amendment_path_full, f"ny_amendment_bulk_pipeline_vip_{current_month}_{current_year}.csv")
     else:
         df_combined = globals()[f"transform_and_load_{state}"](raw_data)
     preview_md = df_combined.head(25).to_markdown()
@@ -136,9 +138,9 @@ def appended_data(context, combined_data):
     if state not in STATES:
         raise NotImplementedError
     elif state == "la":
+        combined_data, combined_data_sub = combined_data
         if combined_data_sub is None:
             raise ValueError("combined_data_sub must be provided for LA state")
-        combined_data, combined_data_sub = combined_data
         appended_data, appended_data_sub = globals()[f"data_appended_{state}"](combined_data, combined_data_sub)
         preview_md_sub = appended_data_sub.head(25).to_markdown()
         context.add_output_metadata({
