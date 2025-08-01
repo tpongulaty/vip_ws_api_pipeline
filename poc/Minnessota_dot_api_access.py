@@ -6,6 +6,8 @@ import pandas as pd
 import os
 import pytz
 from datetime import datetime
+from dotenv import load_dotenv
+load_dotenv()
 
 # For prod environment
 base_url = os.getenv("BASE_URL_MN")

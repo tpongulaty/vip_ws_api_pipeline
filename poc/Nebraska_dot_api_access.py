@@ -143,8 +143,34 @@ df_join1 = df_join1[['contract_id','FedProjectNum_contracts','Description_contra
 # Convert the 'datetime' column to datetime format 
 
 df_join1['Payment_Approval_YearMonth'] = df_join1['ApprovalDate_paymentEstimates'].str.extract(r'(\d{4}-\d{2})')
+# 1️  Drop the duplicate estimate numbers only long enough to total them
+dedup = (
+    df_join1
+        .drop_duplicates(
+            subset=['contract_id',
+                    'Payment_Approval_YearMonth',
+                    'EstimateNumber_paymentEstimates']   # keep one row per estimate #
+        )
+)
 
-df_join1['Payment_Amount_Sum_by_Month'] = df_join1.groupby(['contract_id','Payment_Approval_YearMonth'])['CurrentPaidAmount_paymentEstimates'].transform('sum')
+# 2️  Sum the unique rows and give the result its own column name
+monthly_totals = (
+    dedup
+        .groupby(['contract_id', 'Payment_Approval_YearMonth'])['CurrentPaidAmount_paymentEstimates']
+        .sum()
+        .rename('Payment_Amount_Sum_by_Month')           # this names only the aggregate series
+)
+
+# 3️  Map/merge that series back onto every original row
+df_join1 = df_join1.merge(
+    monthly_totals,
+    on=['contract_id', 'Payment_Approval_YearMonth'],
+    how='left'
+)
+
+# df_join1 now has:
+#   - CurrentPaidAmount_paymentEstimates   (original per-row amount)
+#   - Payment_Amount_Sum_by_Month          (contract-month total after removing duplicate estimates)
 
 # Subset records with paymentEstimates status as 'Approved'
 df_join1 = df_join1[df_join1['Status_paymentEstimates'] == 'Approved']

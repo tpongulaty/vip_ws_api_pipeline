@@ -49,6 +49,8 @@ def extract_text(cell):
 def _scrape_de_chunk(contract_numbers: List[str]) -> List[List[str]]:
     """Scrape one batch of Delaware contract numbers"""
     global HEADER_DE
+    if not contract_numbers:
+        return [], HEADER_DE
     url = 'https://deldot.gov/Business/ProjectStatusQuery/'
     driver = webdriver.Chrome(service=service)
     driver.get(url); driver.maximize_window()
@@ -80,7 +82,7 @@ def _scrape_de_chunk(contract_numbers: List[str]) -> List[List[str]]:
                 
                 try:
                 # Extract the table headers
-                    if t == 0 or not HEADER_DE:
+                    if not HEADER_DE:
                         payment_header = driver.find_element(By.XPATH, '//table[@id="paymentInfo"]/thead/tr').find_elements(By.XPATH,'.//th') 
                         for h,header in enumerate(payment_header):
                             if h != 1 and h != 2:
@@ -278,7 +280,6 @@ def scrape_raw_de() -> pd.DataFrame:
     # Filter out inactive contracts for scraping
     contract_numbers_de_updated = [num for num in contract_numbers_del_filtered if num not in inactive_contracts_de]
     print(len(contract_numbers_de_updated))
-    
 
     all_rows: List[List[str]] = []
     start_idx = _load_progress()
@@ -297,28 +298,46 @@ def scrape_raw_de() -> pd.DataFrame:
 
         try:
             rows, _ = _scrape_de_chunk(subset)
-            chunk_df = pd.DataFrame(data=rows, columns=HEADER_DE)
-            all_rows.extend(rows)
-            _save_progress(start_idx + chunk_end)
+
+            # 1️: check each row, not the whole list
+            good_rows = [r for r in rows if len(r) == len(HEADER_DE)]
+
+            if good_rows:                                    # at least one full row
+                # 2️: validate only the good rows
+                pd.DataFrame(rows, columns=HEADER_DE)   # throws if header changes
+                all_rows.extend(rows)                   # 3️: keep only good rows
+                _save_progress(start_idx + chunk_end)
+                continue                                     # next chunk
+
+            # ── no good rows in this chunk ─────────────────────────────────────────
+            logging.warning("[DE] chunk %s-%s had no full-length rows", abs_start,
+                            abs_start + len(subset) - 1)
+
+            
+            logging.info("No data collected in this chunk yet; just saving progress")
+
+            _save_progress(start_idx + chunk_end)            # still advance pointer
+            # we *skip* the empty chunk but do NOT raise → continue run
+            continue
 
         except Exception as exc:
+            # 4️: any real scrape/driver error
             logging.exception("[DE] chunk failed: flushing & retrying", exc_info=exc)
             if all_rows:
                 tmp_df = pd.DataFrame(all_rows, columns=HEADER_DE)
-                transform_and_load_de(tmp_df)   # <-- flush only on failure
+                transform_and_load_de(tmp_df)
             _save_progress(start_idx + chunk_start)
-            driver.quit()
-            raise
+            raise 
 
     driver.quit()
     if os.path.exists(PROGRESS_FILE):
         os.remove(PROGRESS_FILE)
-
-    de_dot_data = pd.DataFrame(all_rows, columns=HEADER_DE)
-    return de_dot_data
-    
-
-    
+    good_rows = [r for r in all_rows if len(r) == len(HEADER_DE)]
+    if good_rows:
+        de_dot_data = pd.DataFrame(all_rows, columns=HEADER_DE)
+        return de_dot_data
+    else:
+        return pd.DataFrame(columns=HEADER_DE)
 
 def transform_and_load_de(del_dot_data: pd.DataFrame) -> pd.DataFrame:
     # POST PROCESSING
