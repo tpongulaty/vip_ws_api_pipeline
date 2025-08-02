@@ -204,7 +204,7 @@ def scrape_raw_il() -> pd.DataFrame:
     # Filter out inactive contracts for scraping
     contract_numbers_il_updated = [num for num in contract_numbers_il if num not in inactive_contracts]
     print(len(contract_numbers_il_updated))
-    contract_numbers_il_updated = contract_numbers_il_updated[10:22] # remove this after testing
+    
     # Contract number to search for
     # contract_numbers = contract_numbers_il_updated # Modify this to scrape all contracts in specific chunks as scraping all the contracts can crash the browser   
     # ③ Process in chunks with resume ----------------------------------------
@@ -238,6 +238,7 @@ def scrape_raw_il() -> pd.DataFrame:
             if all_rows:  # If we have some rows, load them to DB andsave progress
                 tmp_df = pd.DataFrame(all_rows, columns=header_data_il)
                 transform_and_load_il(tmp_df)
+                print("Executed transform_and_load_il() for the last successful chunk.")
             _save_progress(start_idx + chunk_start, PROGRESS_FILE)
             raise
 
