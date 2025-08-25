@@ -1,4 +1,5 @@
 import os, logging, smtplib, pandas as pd
+import pathlib
 import pytz
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -10,6 +11,7 @@ from dagster import (
     Definitions,
     Field,
     graph,
+    graph_asset,
     op,
     fs_io_manager,
     in_process_executor,
@@ -35,6 +37,10 @@ from scraping_pipelines.de_scraping_pipeline import scrape_raw_de, transform_and
 from scraping_pipelines.il_scraping_pipeline import scrape_raw_il, transform_and_load_il, data_appended_il
 from scraping_pipelines.la_scraping_pipeline import scrape_raw_la, transform_and_load_la, data_appended_la
 from scraping_pipelines.ny_scraping_pipeline import scrape_raw_ny, transform_and_load_ny, data_appended_ny
+from scraping_pipelines.Iowa_dot_api_access import fetch_raw_ia, transform_ia_data
+from scraping_pipelines.Wisconsin_dot_api_access import fetch_raw_ws, transform_ws_data
+from scraping_pipelines.Nebraska_dot_api_access import fetch_raw_ne, transform_ne_data
+from scraping_pipelines.Minnessota_dot_api_access import fetch_raw_mn, transform_mn_data
 from mft_utils import MFTClient
 from get_duckdb_data import export_duckdb_to_csv
 
@@ -305,13 +311,182 @@ for state in STATES:
         )
 
     SENSORS.append(_sensor)  
+# ─────────────────── API pipelines (separate job + schedules) ───────────────────
+
+# Define which API partitions you want; keep it explicit (or load from env if you prefer)
+API_SOURCES = ['ia','ws', 'ne', 'mn']
+api_partitions_def = StaticPartitionsDefinition(API_SOURCES)
+
+# (Optional) retry policy – reuse your existing one
+API_RETRY_POLICY = RETRY_POLICY
+
+@asset(partitions_def=api_partitions_def, key_prefix=["api_data"], retry_policy=API_RETRY_POLICY)
+def api_raw_data(context):
+    """Fetch raw data from an API for this partition (source)."""
+    src = context.partition_key
+    fn_name = f"fetch_raw_{src}"
+    fetch_fn = globals().get(fn_name)
+    if not fetch_fn:
+        raise NotImplementedError(f"Missing API fetcher: {fn_name}()")
+    df = fetch_fn()
+
+    # Minimal preview
+    if hasattr(df, "head"):
+        context.add_output_metadata({
+            "preview": MetadataValue.md(df.head(25).to_markdown()),
+            "row_count": len(df),
+        })
+    return df
+
+@asset(
+    partitions_def=api_partitions_def,
+    ins={"api_raw_data": AssetIn()},
+    key_prefix=["api_data"],
+    retry_policy=API_RETRY_POLICY,
+)
+def api_transformed_data(context, api_raw_data):
+    """Transform + load API raw into storage (DuckDB/warehouse) and return the combined frame."""
+    src = context.partition_key
+    fn_name = f"transform_{src}_data"
+    transform_fn = globals().get(fn_name)
+    if not transform_fn:
+        raise NotImplementedError(f"Missing API transformer: {fn_name}()")
+
+    df_main, df_sub = transform_fn(api_raw_data)
+
+    if hasattr(df_main, "head"):
+        context.add_output_metadata({
+            "preview": MetadataValue.md(df_main.head(25).to_markdown()),
+            "row_count": len(df_main),
+        })
+    return df_main, df_sub
+
+# Job for the API assets (completely separate from your web-scraping job)
+api_jobs = []
+
+# ─────────────────── API export + notify ops ───────────────────
+@op
+def _current_partition_key(context) -> str:
+    pk = context.partition_key
+    if not pk:
+        raise ValueError("No partition key set for API asset run")
+    return pk
+
+@op
+def export_api_csv(context, api_transformed_data, source: str) -> str:
+    """
+    Export API tables to CSV and push via MFT.
+    """
+
+    src   = context.partition_key or (context.op_config or {}).get("source")
+    if not src:
+        raise ValueError("Source partition key must be provided for API export")
+    upper = source.upper()
+
+    # Resolve output directory / format / basename
+    outdir   = os.getenv(f"{upper}_API_BASE_PATH")
+    basename = os.getenv(f"{upper}_API_BASENAME")
+    basename_sub = os.getenv(f"{upper}_API_BASENAME_SUB")
+
+    if not outdir or not basename:
+        raise ValueError(f"Output directory missing for {src}. Set {upper}_API_BASE_PATH")
+    pathlib.Path(outdir).mkdir(parents=True, exist_ok=True)  # Ensure output directory exists
+
+    # Get current year and month of api pulls for writing files appropriately
+    EST = pytz.timezone('US/Eastern')
+    now = datetime.now(EST)
+    current_year = now.year
+    current_month = now.strftime('%b')
+    fname   = f"{basename}_{current_year}_{current_month}.{'csv'}"
+    fpath   = os.path.join(outdir, fname)
+    fname_sub = f"{basename_sub}_{current_year}_{current_month}.{'csv'}" if basename_sub else None
+    fpath_sub = os.path.join(outdir, fname_sub) if fname_sub else None
+    df_out, df_out_sub = api_transformed_data
+
+    df_out.to_csv(fpath, index=False)
+    MFTClient.mft_file(fpath, fname)
+    if df_out_sub is not None and fname_sub:   
+        df_out_sub.to_csv(fpath_sub, index=False)
+        MFTClient.mft_file(fpath_sub, fname_sub)
+
+    return fpath  # notify receives this
+
+
+@op
+def notify_api(context, exported_path: str, source:str) -> str:
+    subject = f"{source.upper()} API Pipeline Success"
+    body    = f"{source} API pipeline finished {datetime.now():%Y-%m-%d %H:%M}"
+    cfg = context.op_config
+    msg = MIMEMultipart()
+    msg["From"], msg["To"], msg["Subject"] = EMAIL_SENDER, EMAIL_RECIPIENT, subject
+    msg.attach(MIMEText(cfg["body"] + f"\nFile: {exported_path}", "plain"))
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+        s.starttls(); s.login(EMAIL_SENDER, EMAIL_PASSWORD); s.send_message(msg)
+    logging.info("[API] Email sent")
+    return exported_path  # pass through for next op
+
+# @op
+# def _passthrough_path(exported_path: str) -> str:
+#     return exported_path
+
+@graph
+def api_post_process_graph(api_transformed_data):
+    src = _current_partition_key()
+    p   = export_api_csv(api_transformed_data=api_transformed_data, source=src)
+    out = notify_api(exported_path=p, source=src)  # <-- chained; not a leaf anymore
+    return out
+
+api_exported_file = graph_asset(
+    name="api_exported_file",
+    key_prefix=["api_data"],
+    partitions_def=api_partitions_def,
+    ins={"api_transformed_data": AssetIn(key=api_transformed_data.key)},
+)(api_post_process_graph)
+
+api_asset_job = define_asset_job(
+    name="api_assets_job",
+    selection=[api_raw_data.key, api_transformed_data.key, api_exported_file.key],
+    partitions_def=api_partitions_def,
+    executor_def=in_process_executor,
+)
+api_jobs.append(api_asset_job)
+
+api_schedules = []
+
+# Per-partition schedules (independent cron per API source)
+# Fill these with your desired timings
+API_CRONS = {
+    "ia": "0 8 25 * *",
+    "ws": "30 8 25 * *",
+    "ne": "0 9 25 * *",
+    "mn": "30 9 25 * *"
+}
+
+def make_partition_schedule_for_job(job, partition_key, cron, tz="US/Eastern", name_prefix="api"):
+    def _execution_fn(context, key=partition_key):
+        # Build exactly one RunRequest for this partition when the cron fires
+        return [job.run_request_for_partition(context, partition_key=key)]
+    return ScheduleDefinition(
+        name=f"{name_prefix}_{partition_key}_schedule",
+        cron_schedule=cron,
+        job=job,
+        execution_timezone=tz,
+        execution_fn=_execution_fn,
+    )
+# Create schedules only for API sources that have a cron defined
+for src in API_SOURCES:
+    cron = API_CRONS.get(src)
+    if not cron:
+        logging.warning("[API] No cron provided for %s; skipping schedule.", src)
+        continue
+    api_schedules.append(make_partition_schedule_for_job(api_asset_job, src, cron))
 
 # ───────── Definitions ─────────
 defs = Definitions(
-    assets=[raw_data, combined_data, appended_data],
-    jobs=jobs,
-    schedules=schedules,
-    sensors=SENSORS,
+    assets=[raw_data, combined_data, appended_data, api_raw_data, api_transformed_data, api_exported_file],
+    jobs=jobs+api_jobs,
+    schedules=schedules+api_schedules,
+    sensors= SENSORS,
     resources={"io_manager": fs_io_manager},
 )
 
