@@ -327,6 +327,7 @@ def scrape_raw_de() -> pd.DataFrame:
                 tmp_df = pd.DataFrame(all_rows, columns=HEADER_DE)
                 transform_and_load_de(tmp_df)
             _save_progress(start_idx + chunk_start)
+            driver.quit()
             raise 
 
     driver.quit()

@@ -248,6 +248,7 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
                 transform_and_load_la(tmp_df, LA_city_data_sub)  # Load the data to DuckDB
                 print("Executed transform_and_load_la() for the last successful chunk.")
             _save_progress(start_idx + chunk_start)
+            driver.quit()
             raise
 
     if os.path.exists(PROGRESS_FILE):

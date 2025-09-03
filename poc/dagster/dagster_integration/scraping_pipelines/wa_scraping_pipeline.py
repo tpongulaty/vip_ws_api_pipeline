@@ -203,6 +203,7 @@ def scrape_raw_wa() -> pd.DataFrame:
                 transform_and_load_wa(tmp_df)  # unchanged
                 print("Executed transform_and_load_wa() for the last successful chunk.")
             _save_progress(start_idx + chunk_start)
+            driver.quit()
             raise
 
     if os.path.exists(PROGRESS_FILE):

@@ -240,6 +240,7 @@ def scrape_raw_il() -> pd.DataFrame:
                 transform_and_load_il(tmp_df)
                 print("Executed transform_and_load_il() for the last successful chunk.")
             _save_progress(start_idx + chunk_start, PROGRESS_FILE)
+            driver.quit()
             raise
 
     if os.path.exists(PROGRESS_FILE):
