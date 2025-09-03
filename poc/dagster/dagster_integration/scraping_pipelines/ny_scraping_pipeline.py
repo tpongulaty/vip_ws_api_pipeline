@@ -27,8 +27,8 @@ def scrape_raw_ny() -> pd.DataFrame:
     download_dir = os.getenv("DOWNLOAD_DIR_NY")  # Replace with desired path. Ideally where downloads from browser are isolated to avoid conflicts
 
     # Configure Chrome options
-    chrome_options = Options()
-    chrome_options.add_experimental_option("prefs", {
+    opts = Options()
+    opts.add_experimental_option("prefs", {
         "download.default_directory": rf"{download_dir}",  # Set default download directory
         "download.prompt_for_download": False,  # Disable download prompts
         "directory_upgrade": True,  # Automatically overwrite files
@@ -38,11 +38,16 @@ def scrape_raw_ny() -> pd.DataFrame:
     service = Service(ChromeDriverManager().install())
     # URL of the site
     url = 'https://wwe2.osc.state.ny.us/transparency/contracts/contractsearch.cfm'
-    
+           
+    opts.add_argument("--headless")
+
     def get_bulk_file():
         try:
             # Start a new browser session
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            driver = webdriver.Chrome(service=service, options=opts)
+            driver.get(url)
+            driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+
             def is_download_complete(file_path):
                 """
                 Check if the file is complete by:
@@ -80,6 +85,7 @@ def scrape_raw_ny() -> pd.DataFrame:
                     time.sleep(1)  # Wait for a short time before checking again
 
             driver.get(url)
+            driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
             # wait for agency option to appear
             agency_name = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "/html/body/div[1]/div[3]/div[2]/div/form/div[1]/p[1]/span/span[1]/span/ul/li/input"))

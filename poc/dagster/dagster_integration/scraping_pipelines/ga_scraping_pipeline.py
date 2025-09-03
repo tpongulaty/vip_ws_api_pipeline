@@ -31,8 +31,11 @@ def scrape_raw_ga() -> pd.DataFrame:
     chrome_options.add_argument("--disable-notifications") 
     chrome_options.add_argument("--disable-infobars")
     chrome_options.add_argument("--disable-web-security") 
-    chrome_options.add_argument("--ignore-certificate-errors")
-
+    chrome_options.add_argument("--ignore-certificate-errors")   
+    chrome_options.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver.get(url)
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
     # Contract number to search for
     # contract_numbers = list_ga[0:1000] # try with smaller list and clean '#' 
     contract_numbers = ['B10007-97-M00-1','APER40-09-127-0'] #contract_id

@@ -12,6 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import ElementClickInterceptedException
+from selenium.webdriver.chrome.options import Options
 from datetime import datetime
 import pytz
 import logging
@@ -20,7 +21,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 service = Service(ChromeDriverManager().install())
-print(os.getenv("IL_CHUNK_SIZE"))
+
 CHUNK_SIZE: int = int(os.getenv("IL_CHUNK_SIZE"))          # >>> ADDED
 def create_progress_file():
     THIS_DIR = os.path.dirname(os.path.abspath(__file__))          # >>> ADDED
@@ -40,12 +41,15 @@ def _save_progress(idx: int, PROGRESS_FILE: str) -> None:
 
 def _scrape_il_chunk(contract_numbers: List[str]) -> List[List[str]]:  # >>> ADDED
     # Get associated Contract information
-    driver = webdriver.Chrome(service=service)
     # URL of the site
     url = 'https://apps1.dot.illinois.gov/WCP/'
     # Start a new browser session
+    opts = Options()    
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
     driver.get(url)
-    driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized 
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    # driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized 
     rows: List[List[str]] = []
     try:
         wait = WebDriverWait(driver, 100)
@@ -153,11 +157,14 @@ def _scrape_il_chunk(contract_numbers: List[str]) -> List[List[str]]:  # >>> ADD
 def scrape_raw_il() -> pd.DataFrame:
     # Retrieve contract numbers
     # WebDriver Manager will handle everything automatically
-    driver = webdriver.Chrome(service=service)
     # URL of the site
     url = 'https://apps1.dot.illinois.gov/WCP/PEstimate/PEstimateSearch'
+    opts = Options()    
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
     driver.get(url)
-    driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    # driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized
     contract_numbers_il: List[str] = []
     try:
         time.sleep(10)

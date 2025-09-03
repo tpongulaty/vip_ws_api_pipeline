@@ -13,6 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
 import time
 from datetime import datetime
 import pytz
@@ -49,9 +50,11 @@ def _scrape_wa_chunk(contract_numbers: List[str]) -> List[List[str]]:
     rows: List[List[str]] = []
     url = 'https://remoteapps.wsdot.wa.gov/construction/project/progress/' 
     # Start a new browser session
-    driver = webdriver.Chrome(service=service)
+    opts = Options()
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
     driver.get(url)
-    driver.maximize_window()
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
     try:
         for i,value in enumerate(contract_numbers):
             # Wait for the contract number input box to be present
@@ -141,12 +144,13 @@ def scrape_raw_wa() -> pd.DataFrame:
     pdf_file_path = os.getenv("PDF_FILE_PATH_WA")
     logger.info("PDF_FILE_PATH_WA → %s", repr(pdf_file_path))
     # Set up the WebDriver
-    options = webdriver.ChromeOptions() 
-    options.add_argument("--start-maximized") # Ensures the browser is fullscreen
+    opts = Options()
+    opts.add_argument("--headless") # Ensures the browser is headless
     # URL of the site
     url = 'https://www.wsdot.wa.gov/publications/fulltext/construction/projectreports/Active.pdf-en-us.pdf'
-    driver = webdriver.Chrome(service=service, options=options)
+    driver = webdriver.Chrome(service=service, options=opts)
     driver.get(url)
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
     # original_window = driver.window_handles[0]
     try:
             time.sleep(3)

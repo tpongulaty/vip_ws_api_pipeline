@@ -9,6 +9,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.chrome.options import Options
 from datetime import datetime
 from datetime import timedelta
 import pytz
@@ -52,8 +53,12 @@ def _scrape_de_chunk(contract_numbers: List[str]) -> List[List[str]]:
     if not contract_numbers:
         return [], HEADER_DE
     url = 'https://deldot.gov/Business/ProjectStatusQuery/'
-    driver = webdriver.Chrome(service=service)
-    driver.get(url); driver.maximize_window()
+    opts = Options()    
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
+    driver.get(url)
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+
     rows: List[List[str]] = []
     original_window = driver.window_handles[0]
     
@@ -208,12 +213,14 @@ def scrape_raw_de() -> pd.DataFrame:
     # URL of the site
     url = 'https://deldot.gov/Business/ProjectStatusQuery/'
     # Start a new browser session
-    driver = webdriver.Chrome(service=service)
+    opts = Options()    
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
     driver.get(url)
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
     contract_numbers_del = []
     header_contract_del = ["contract_number","awarded_date"]
 
-    driver.maximize_window()
     time.sleep(12) # Next button is disabled initially while page is loading. Explicit wait is required
     try:
         next_page_button = WebDriverWait(driver, 20).until(

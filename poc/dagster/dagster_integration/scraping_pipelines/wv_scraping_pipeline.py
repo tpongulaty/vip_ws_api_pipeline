@@ -8,6 +8,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.chrome.options import Options
 from datetime import datetime
 import pytz
 import time
@@ -26,10 +27,11 @@ def scrape_raw_wv() -> pd.DataFrame:
     # Automatic driver installer
     service = Service(ChromeDriverManager().install())
     url = 'https://www.wva.state.wv.us/wvdot/surety/'
-
-
-    driver = webdriver.Chrome(service=service)
-    driver.get(url)
+    opts = Options()    
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
+    driver.get(url)  
+    driver.set_window_size(1920,1080)   # adjust window size to avoid elements from overlapping 
     row_data_list_wv = []
     header_data_wv = []
 

@@ -50,8 +50,11 @@ def _scrape_la_chunk(contract_numbers: List[str]) -> List[List[str]]:
     url = 'https://bca.lacity.org/Payments/payments_search.php'
     row_data_list_la: List[List[str]] = []
     # Start a new browser session
-    driver = webdriver.Chrome(service=service)
+    opts = Options()    
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
     driver.get(url)
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
 
     try:
         for i,value in enumerate(contract_numbers):
@@ -144,8 +147,11 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
     url_sub = 'https://bca.lacity.gov/approvedsubs/'          
 
     # Start a new browser session
-    driver = webdriver.Chrome(service=service)
+    opts = Options()    
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
     driver.get(url_sub)
+    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
     row_data_list_la_sub = []
     header_data_la_sub = ["work_order","project_title","subcontractor_name","work_description","work_value"]
 

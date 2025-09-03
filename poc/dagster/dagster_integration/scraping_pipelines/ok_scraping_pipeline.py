@@ -10,6 +10,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import InvalidArgumentException
+from selenium.webdriver.chrome.options import Options
 from datetime import datetime
 import pytz
 import time
@@ -48,8 +49,11 @@ def _scrape_ok_chunk(contract_numbers: List[str]) -> List[List[str]]:
     url = 'https://www.odot.org/CONTRACTADMIN/ESTIMATES/'
 
     # Start a new browser session
-    driver = webdriver.Chrome(service=service)
-    driver.get(url)
+    opts = Options()    
+    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=opts)
+    driver.get(url)  
+    driver.set_window_size(1920,1080)   # adjust window size to avoid elements from overlapping 
     original_window = driver.window_handles[0]
     
     try:
@@ -162,9 +166,12 @@ def scrape_raw_ok() -> pd.DataFrame:
  
     contract_numbers = []
     # Start a new browser session
-    driver = webdriver.Chrome(service=service)
+    driver = webdriver.Chrome(service=service, options=Options())
+    opts = Options()    
+    opts.add_argument("--headless")
     try:
         driver.get(url) 
+        driver.set_window_size(1920,1080)   # adjust window size to avoid elements from overlapping 
         bulk_contracts = True
         if bulk_contracts:
                 all_contracts = WebDriverWait(driver, 10).until(
