@@ -1,5 +1,4 @@
 import duckdb
-import logging
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -9,15 +8,25 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.keys import Keys
 from datetime import datetime
 import pytz
 import time
 import os
 from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv  
+from dagster import get_dagster_logger
+logger = get_dagster_logger()
 # Load environment variables from .env file
 load_dotenv()
 
+OPTS = Options()
+OPTS.add_argument("--disable-popup-blocking") 
+OPTS.add_argument("--disable-notifications") 
+OPTS.add_argument("--disable-infobars")
+OPTS.add_argument("--disable-web-security") 
+OPTS.add_argument("--ignore-certificate-errors")   
+OPTS.add_argument("--headless") # Ensures the browser is headless
 def scrape_raw_ga() -> pd.DataFrame:
     # Automatic driver installer
     service = Service(ChromeDriverManager().install())
@@ -26,16 +35,7 @@ def scrape_raw_ga() -> pd.DataFrame:
     url = 'https://www.dot.ga.gov/GDOT/pages/contractors.aspx'
 
     # Set Chrome options to disable alerts
-    chrome_options = Options() 
-    chrome_options.add_argument("--disable-popup-blocking") 
-    chrome_options.add_argument("--disable-notifications") 
-    chrome_options.add_argument("--disable-infobars")
-    chrome_options.add_argument("--disable-web-security") 
-    chrome_options.add_argument("--ignore-certificate-errors")   
-    chrome_options.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    driver.get(url)
-    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    
     # Contract number to search for
     # contract_numbers = list_ga[0:1000] # try with smaller list and clean '#' 
     contract_numbers = ['B10007-97-M00-1','APER40-09-127-0'] #contract_id
@@ -47,9 +47,10 @@ def scrape_raw_ga() -> pd.DataFrame:
                     "date_processed","material_allowance","date_sent_to_accounting", "total_payments", "estimate_link"]
     row_data_list_ga = []
     # Create a WebDriver instance with Chrome options
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url)
+    # driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    driver.maximize_window()
     original_window = driver.current_window_handle
     pi_number = False
     contract_id = False
@@ -276,7 +277,7 @@ def scrape_raw_ga() -> pd.DataFrame:
                 ok_button_1 = driver.find_element(By.XPATH, '/html/body/div[12]/div/table/tbody[1]/tr/td/div[3]/a[1]')
                 ok_button_1.click() # Button to confirm values for filters after entering in the text box
                 payment_info_selected() # Retrieves the data from the selected filters and stores it in a dataframe
-            GA_DOT_payment_data = pd.concat(dataframes, ignore_index=True)
+            GA_DOT_payment_data = pd.concat(dataframes_payment, ignore_index=True)
         elif primary_county:
             for i in range(0,len(primary_counties),1): # iterate through the list of primary counties that was intially fetched in steps of 20 (adjust as suitable)
                 check_conditions() # corresponding dropdown is engaged
@@ -675,7 +676,7 @@ def transform_and_load_ga(ga_dot_data: pd.DataFrame) -> pd.DataFrame:
     # Close connection
     con.close()
     print("Georgia scraping completed and DUCKDB file updated Successfully.")
-    logging.info(
+    logger.info(
         'Georgia scraping completed and DUCKDB file updated Successfully.')
     return combined_data
     
@@ -686,10 +687,10 @@ def data_appended_ga(combined_data: pd.DataFrame) -> pd.DataFrame: # Fetch the d
     appended_data = combined_data[combined_data["Pull_Date_Initial"] == current_date]
     if appended_data.empty:
         print('Data not yet updated on Website.')
-        logging.info(
+        logger.info(
             'Data not yet updated on Website.'
         )
     else:
         print('Successfully appended latest data.')
-        logging.info('Successfully appended latest data.')
+        logger.info('Successfully appended latest data.')
     return appended_data

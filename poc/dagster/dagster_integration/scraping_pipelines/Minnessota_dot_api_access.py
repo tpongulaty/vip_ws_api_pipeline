@@ -8,6 +8,8 @@ import pytz
 from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
+from dagster import get_dagster_logger
+logger = get_dagster_logger()
 
 def fetch_raw_mn():
     # For prod environment

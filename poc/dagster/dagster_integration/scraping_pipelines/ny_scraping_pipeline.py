@@ -1,4 +1,3 @@
-import logging
 import duckdb
 import pandas as pd
 import time
@@ -17,18 +16,21 @@ from datetime import datetime
 import pytz
 import os
 from dotenv import load_dotenv
+from dagster import get_dagster_logger
+logger = get_dagster_logger()
 
 # Load environment variables from .env file
 load_dotenv()
 
+OPTS = Options()
+OPTS.add_argument("--headless") # Ensures the browser is headless
 def scrape_raw_ny() -> pd.DataFrame:
     """ Scrapes the NY City DOT data and returns the raw data as a DataFrame."""
     # Set download directory
     download_dir = os.getenv("DOWNLOAD_DIR_NY")  # Replace with desired path. Ideally where downloads from browser are isolated to avoid conflicts
 
     # Configure Chrome options
-    opts = Options()
-    opts.add_experimental_option("prefs", {
+    OPTS.add_experimental_option("prefs", {
         "download.default_directory": rf"{download_dir}",  # Set default download directory
         "download.prompt_for_download": False,  # Disable download prompts
         "directory_upgrade": True,  # Automatically overwrite files
@@ -38,15 +40,13 @@ def scrape_raw_ny() -> pd.DataFrame:
     service = Service(ChromeDriverManager().install())
     # URL of the site
     url = 'https://wwe2.osc.state.ny.us/transparency/contracts/contractsearch.cfm'
-           
-    opts.add_argument("--headless")
 
     def get_bulk_file():
         try:
             # Start a new browser session
-            driver = webdriver.Chrome(service=service, options=opts)
+            driver = webdriver.Chrome(service=service, options=OPTS)
             driver.get(url)
-            driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+            driver.maximize_window()
 
             def is_download_complete(file_path):
                 """
@@ -272,7 +272,7 @@ def transform_and_load_ny(ny_bulk: pd.DataFrame, ny_amendment: pd.DataFrame) -> 
     # Close connection
     con.close()
     print("NY City scraping completed and DUCKDB file updated Successfully.")
-    logging.info(
+    logger.info(
         'NY City scraping completed and DUCKDB file updated Successfully.')
     ny_amendment.rename(columns = {'TRANSACTION TYPE': 'Transaction_Type','VENDOR NAME':'Contractor_Name','DEPARTMENT/FACILITY': 'Project_Dept_Facility','CONTRACT NUMBER':'Contract_Number','TRANSACTION AMOUNT':'Transaction_Amount',
                         'START DATE':'Start_Date','END DATE':'Project_Comp_Substantial','DESCRIPTION':'Description',
@@ -286,12 +286,12 @@ def data_appended_ny(combined_data, ny_amendment=None) -> pd.DataFrame: # Fetch 
     appended_data = combined_data[combined_data["Pull_Date_Initial"] == current_date]
     if appended_data.empty:
         print('Data not yet updated on Website.')
-        logging.info(
+        logger.info(
             'Data not yet updated on Website.'
         )
     else:
         print('Successfully appended latest data.')
-        logging.info('Successfully appended latest data.')
+        logger.info('Successfully appended latest data.')
     return appended_data
     
 

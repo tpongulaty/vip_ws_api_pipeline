@@ -8,7 +8,10 @@ import pytz
 from datetime import datetime
 
 from dotenv import load_dotenv
+from dagster import get_dagster_logger
 
+
+logger = get_dagster_logger()
 # Load environment variables
 load_dotenv()
 

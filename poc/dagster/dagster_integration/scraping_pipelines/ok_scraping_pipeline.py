@@ -1,5 +1,4 @@
 import duckdb
-import logging
 import pandas as pd
 from typing import List
 from selenium import webdriver
@@ -17,10 +16,13 @@ import time
 import os
 from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
+from dagster import get_dagster_logger
+logger = get_dagster_logger()
 
 # Load environment variables from .env file
 load_dotenv()
-
+OPTS = Options()
+OPTS.add_argument("--headless") # Ensures the browser is headless
 # Automatic driver installer
 service = Service(ChromeDriverManager().install())
 THIS_DIR      = os.path.dirname(os.path.abspath(__file__))
@@ -41,7 +43,7 @@ def _load_progress() -> int:
 def _save_progress(idx: int) -> None:
     with open(PROGRESS_FILE, "w") as fh:
         fh.write(str(idx))
-    logging.info("[OK] progress pointer → %s", idx)
+    logger.info("[OK] progress pointer → %s", idx)
 
 def _scrape_ok_chunk(contract_numbers: List[str]) -> List[List[str]]:
     rows: List[List[str]] = [] 
@@ -49,11 +51,9 @@ def _scrape_ok_chunk(contract_numbers: List[str]) -> List[List[str]]:
     url = 'https://www.odot.org/CONTRACTADMIN/ESTIMATES/'
 
     # Start a new browser session
-    opts = Options()    
-    opts.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url)  
-    driver.set_window_size(1920,1080)   # adjust window size to avoid elements from overlapping 
+    driver.maximize_window()
     original_window = driver.window_handles[0]
     
     try:
@@ -166,12 +166,11 @@ def scrape_raw_ok() -> pd.DataFrame:
  
     contract_numbers = []
     # Start a new browser session
-    driver = webdriver.Chrome(service=service, options=Options())
-    opts = Options()    
-    opts.add_argument("--headless")
+    driver = webdriver.Chrome(service=service, options=OPTS)
+
     try:
         driver.get(url) 
-        driver.set_window_size(1920,1080)   # adjust window size to avoid elements from overlapping 
+        driver.maximize_window()   # adjust window size to avoid elements from overlapping
         bulk_contracts = True
         if bulk_contracts:
                 all_contracts = WebDriverWait(driver, 10).until(
@@ -198,7 +197,7 @@ def scrape_raw_ok() -> pd.DataFrame:
         chunk_end  = min(chunk_start + CHUNK_SIZE, total)
         subset     = remaining[chunk_start:chunk_end]
         abs_start  = start_idx + chunk_start
-        logging.info("[OK] chunk %s-%s", abs_start, abs_start+len(subset)-1)
+        logger.info("[OK] chunk %s-%s", abs_start, abs_start+len(subset)-1)
 
         try:
             rows = _scrape_ok_chunk(subset)
@@ -207,7 +206,7 @@ def scrape_raw_ok() -> pd.DataFrame:
             _save_progress(start_idx + chunk_end)
 
         except Exception as exc:
-            logging.exception("[OK] chunk failed: flushing & retrying", exc_info=exc)
+            logger.exception("[OK] chunk failed: flushing & retrying", exc_info=exc)
             if all_rows:
                 tmp_df = pd.DataFrame(all_rows, columns=HEADER_OK)
                 transform_and_load_ok(tmp_df)
@@ -399,7 +398,7 @@ def transform_and_load_ok(ok_dot_data: pd.DataFrame) -> pd.DataFrame:
         # Close connection
         con.close()
         print("Oklahoma scraping completed and DUCKDB file updated Successfully.")
-        logging.info(
+        logger.info(
             'Oklahoma scraping completed and DUCKDB file updated Successfully.')
         return combined_data
     
@@ -413,11 +412,11 @@ def data_appended_ok(combined_data: pd.DataFrame) -> pd.DataFrame: # Fetch the d
     appended_data = combined_data[combined_data["Pull_Date_Initial"] == current_date]
     if appended_data.empty:
         print('Data not yet updated on Website.')
-        logging.info(
+        logger.info(
             'Data not yet updated on Website.'
         )
     else:
         print('Successfully appended latest data.')
-        logging.info('Successfully appended latest data.')
+        logger.info('Successfully appended latest data.')
     return appended_data
   

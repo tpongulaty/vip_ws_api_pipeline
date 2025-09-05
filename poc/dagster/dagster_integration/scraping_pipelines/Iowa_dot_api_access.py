@@ -8,6 +8,9 @@ import pytz
 from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
+from dagster import get_dagster_logger
+logger = get_dagster_logger()
+
 ENTITIES_TO_FETCH = ['Contracts', 'ContractTimes', 'ContractProjects', 'PaymentEstimates', 'RefVendors','ContractPaymentEstimateTypes','RefPaymentEstimateTypes']
 # Function to fetch raw data from Iowa DOT API
 def fetch_raw_ia():

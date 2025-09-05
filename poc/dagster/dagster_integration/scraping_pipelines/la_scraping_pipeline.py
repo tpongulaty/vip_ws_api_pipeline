@@ -19,12 +19,15 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
 from datetime import datetime
 import pytz
-import logging
 import duckdb
 from dotenv import load_dotenv
+from dagster import get_dagster_logger
+logger = get_dagster_logger()
 
 load_dotenv()
 
+OPTS = Options()
+OPTS.add_argument("--headless") # Ensures the browser is headless
 service = Service(ChromeDriverManager().install())
 THIS_DIR      = os.path.dirname(os.path.abspath(__file__))
 CHUNK_SIZE    = int(os.getenv("LA_CHUNK_SIZE", 500))                 # >>> ADDED
@@ -39,7 +42,7 @@ def _load_progress() -> int:                                           # >>> ADD
 def _save_progress(idx: int) -> None:                                 # >>> ADDED
     with open(PROGRESS_FILE, "w") as fh:
         fh.write(str(idx))
-    logging.info("[LA] progress pointer saved → %s", idx)
+    logger.info("[LA] progress pointer saved → %s", idx)
 
 HEADER_LA: List[str] = []                                              # global header   
 
@@ -50,11 +53,9 @@ def _scrape_la_chunk(contract_numbers: List[str]) -> List[List[str]]:
     url = 'https://bca.lacity.org/Payments/payments_search.php'
     row_data_list_la: List[List[str]] = []
     # Start a new browser session
-    opts = Options()    
-    opts.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url)
-    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    driver.maximize_window()
 
     try:
         for i,value in enumerate(contract_numbers):
@@ -147,11 +148,9 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
     url_sub = 'https://bca.lacity.gov/approvedsubs/'          
 
     # Start a new browser session
-    opts = Options()    
-    opts.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url_sub)
-    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    driver.maximize_window()
     row_data_list_la_sub = []
     header_data_la_sub = ["work_order","project_title","subcontractor_name","work_description","work_value"]
 
@@ -241,14 +240,14 @@ def scrape_raw_la() -> Tuple[pd.DataFrame, pd.DataFrame]:
         chunk_end = min(chunk_start + CHUNK_SIZE, total)
         subset = remaining[chunk_start:chunk_end]
         abs_start = start_idx + chunk_start
-        logging.info(f"[LA] chunk {abs_start},{abs_start + len(subset)-1}")
+        logger.info(f"[LA] chunk {abs_start},{abs_start + len(subset)-1}")
         try:
             rows, _ = _scrape_la_chunk(subset)          # >>> ADDED helper above
             chunk_df = pd.DataFrame(data=rows, columns=HEADER_LA) # Ensures there is no mismatch in columns
             all_rows.extend(rows)
             _save_progress(start_idx + chunk_end)                 # >>> ADDED
         except Exception as exc:
-            logging.exception("[LA] chunk failed: will retry next run", exc_info=exc)
+            logger.exception("[LA] chunk failed: will retry next run", exc_info=exc)
             if all_rows and HEADER_LA:  # If we have some rows, load them to DB andsave progress
                 tmp_df = pd.DataFrame(all_rows, columns=HEADER_LA)
                 transform_and_load_la(tmp_df, LA_city_data_sub)  # Load the data to DuckDB
@@ -484,7 +483,7 @@ def transform_and_load_la(LA_city_data: pd.DataFrame, LA_city_data_sub: pd.DataF
     # Close connection
     con.close()
     print("LA_City scraping completed and DUCKDB file updated Successfully.")
-    logging.info(
+    logger.info(
         'LA_City scraping completed and DUCKDB file updated Successfully.')
     return combined_data, combined_data_sub
 
@@ -496,21 +495,21 @@ def data_appended_la(combined_data: pd.DataFrame, combined_data_sub: pd.DataFram
     appended_data_sub = combined_data_sub[combined_data_sub["Pull_Date_Initial"] == current_date]
     if appended_data.empty and appended_data_sub.empty:
         print('Data and sub data not yet updated on Website.')
-        logging.info(
+        logger.info(
             'Data not yet updated on Website.'
         )
     elif appended_data.empty:
         print('Data not yet updated on Website.')
-        logging.info(
+        logger.info(
             'Data not yet updated on Website.'
         )
     elif appended_data_sub.empty:
         print('Sub Data not yet updated on Website. Successfully appended latest main data')
-        logging.info(
+        logger.info(
             'Sub Data not yet updated on Website. Successfully appended latest main data'
         )
     else:
         print('Successfully appended latest data.')
-        logging.info('Successfully appended latest data.')
+        logger.info('Successfully appended latest data.')
     
     return appended_data, appended_data_sub

@@ -1,5 +1,4 @@
 import duckdb
-import logging
 from typing import List
 import pandas as pd
 from selenium import webdriver
@@ -18,13 +17,16 @@ import os
 import re
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.keys import Keys
-
-
 from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
+from dagster import get_dagster_logger
+
+logger = get_dagster_logger()
 # Load environment variables from .env file
 load_dotenv()
 
+OPTS = Options()
+OPTS.add_argument("--headless") # Ensures the browser is headless
 CHUNK_SIZE = int(os.getenv("DE_CHUNK_SIZE", 100))
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))          # >>> ADDED
 PROGRESS_FILE = os.path.join(THIS_DIR, "de_progress.txt")      # >>> ADDED
@@ -53,11 +55,10 @@ def _scrape_de_chunk(contract_numbers: List[str]) -> List[List[str]]:
     if not contract_numbers:
         return [], HEADER_DE
     url = 'https://deldot.gov/Business/ProjectStatusQuery/'
-    opts = Options()    
-    opts.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url)
-    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    # driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    driver.maximize_window()
 
     rows: List[List[str]] = []
     original_window = driver.window_handles[0]
@@ -213,11 +214,10 @@ def scrape_raw_de() -> pd.DataFrame:
     # URL of the site
     url = 'https://deldot.gov/Business/ProjectStatusQuery/'
     # Start a new browser session
-    opts = Options()    
-    opts.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url)
-    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    # driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    driver.maximize_window()
     contract_numbers_del = []
     header_contract_del = ["contract_number","awarded_date"]
 
@@ -301,7 +301,7 @@ def scrape_raw_de() -> pd.DataFrame:
         chunk_end = min(chunk_start + CHUNK_SIZE, total)
         subset   = remaining[chunk_start:chunk_end]
         abs_start = start_idx + chunk_start
-        logging.info("[DE] chunk %s-%s", abs_start, abs_start+len(subset)-1)
+        logger.info("[DE] chunk %s-%s", abs_start, abs_start+len(subset)-1)
 
         try:
             rows, _ = _scrape_de_chunk(subset)
@@ -317,11 +317,10 @@ def scrape_raw_de() -> pd.DataFrame:
                 continue                                     # next chunk
 
             # ── no good rows in this chunk ─────────────────────────────────────────
-            logging.warning("[DE] chunk %s-%s had no full-length rows", abs_start,
+            logger.warning("[DE] chunk %s-%s had no full-length rows", abs_start,
                             abs_start + len(subset) - 1)
 
-            
-            logging.info("No data collected in this chunk yet; just saving progress")
+            logger.info("No data collected in this chunk yet; just saving progress")
 
             _save_progress(start_idx + chunk_end)            # still advance pointer
             # we *skip* the empty chunk but do NOT raise → continue run
@@ -329,7 +328,7 @@ def scrape_raw_de() -> pd.DataFrame:
 
         except Exception as exc:
             # 4️: any real scrape/driver error
-            logging.exception("[DE] chunk failed: flushing & retrying", exc_info=exc)
+            logger.exception("[DE] chunk failed: flushing & retrying", exc_info=exc)
             if all_rows:
                 tmp_df = pd.DataFrame(all_rows, columns=HEADER_DE)
                 transform_and_load_de(tmp_df)
@@ -605,7 +604,7 @@ def transform_and_load_de(del_dot_data: pd.DataFrame) -> pd.DataFrame:
     # Close connection
     con.close()
     print("Delaware scraping completed and DUCKDB file updated Successfully.")
-    logging.info(
+    logger.info(
         'Delaware scraping completed and DUCKDB file updated Successfully.')
     return combined_data
 
@@ -616,10 +615,10 @@ def data_appended_de(combined_data: pd.DataFrame) -> pd.DataFrame: # Fetch the d
     appended_data = combined_data[combined_data["Pull_Date_Initial"] == current_date]
     if appended_data.empty:
         print('Data not yet updated on Website.')
-        logging.info(
+        logger.info(
             'Data not yet updated on Website.'
         )
     else:
         print('Successfully appended latest data.')
-        logging.info('Successfully appended latest data.')
+        logger.info('Successfully appended latest data.')
     return appended_data

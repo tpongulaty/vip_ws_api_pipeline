@@ -15,13 +15,16 @@ from selenium.common.exceptions import ElementClickInterceptedException
 from selenium.webdriver.chrome.options import Options
 from datetime import datetime
 import pytz
-import logging
 import duckdb
 from dotenv import load_dotenv
+from dagster import get_dagster_logger
+logger = get_dagster_logger()
 
 load_dotenv()
 service = Service(ChromeDriverManager().install())
 
+OPTS = Options()
+OPTS.add_argument("--headless") # Ensures the browser is headless
 CHUNK_SIZE: int = int(os.getenv("IL_CHUNK_SIZE"))          # >>> ADDED
 def create_progress_file():
     THIS_DIR = os.path.dirname(os.path.abspath(__file__))          # >>> ADDED
@@ -35,7 +38,7 @@ def _load_progress(PROGRESS_FILE: str) -> int:                                  
         return 0
 
 def _save_progress(idx: int, PROGRESS_FILE: str) -> None:
-    logging.info("Saving IL progress pointer %s to %s", idx, PROGRESS_FILE)                          # >>> ADDED
+    logger.info("Saving IL progress pointer %s to %s", idx, PROGRESS_FILE)                          # >>> ADDED
     with open(PROGRESS_FILE, "w") as fh:
         fh.write(str(idx))
 
@@ -44,12 +47,10 @@ def _scrape_il_chunk(contract_numbers: List[str]) -> List[List[str]]:  # >>> ADD
     # URL of the site
     url = 'https://apps1.dot.illinois.gov/WCP/'
     # Start a new browser session
-    opts = Options()    
-    opts.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url)
-    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
-    # driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized 
+    # driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized 
     rows: List[List[str]] = []
     try:
         wait = WebDriverWait(driver, 100)
@@ -159,12 +160,10 @@ def scrape_raw_il() -> pd.DataFrame:
     # WebDriver Manager will handle everything automatically
     # URL of the site
     url = 'https://apps1.dot.illinois.gov/WCP/PEstimate/PEstimateSearch'
-    opts = Options()    
-    opts.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url)
-    driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
-    # driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized
+    # driver.set_window_size(1920, 1080)  # adjust window size to avoid elements from overlapping
+    driver.maximize_window() # resolves issue where dropdown buttons on this page are not visible when window is minimized
     contract_numbers_il: List[str] = []
     try:
         time.sleep(10)
@@ -198,8 +197,17 @@ def scrape_raw_il() -> pd.DataFrame:
     df1['Payment_Date'] = pd.to_datetime(df1['Payment_Date'], format='%m/%d/%Y', errors='coerce')
 
     # Convert 'Percent_Complete' to numeric format (remove '%' and convert to float)
-    df1['Payment_Total_Percent'] = df1['Payment_Total_Percent'].str.rstrip('%').astype(float)
-
+    # df1['Payment_Total_Percent'] = df1['Payment_Total_Percent'].str.rstrip('%').astype(float)
+    df1['Payment_Total_Percent'] = pd.to_numeric(
+    df1['Payment_Total_Percent'].astype(str)
+      .str.replace('\u2212', '-', regex=False)           # unicode minus → hyphen
+      .str.replace('\xa0', '', regex=False)              # NBSPs
+      .str.replace(',', '', regex=False)                 # thousands sep
+      .str.replace(r'^\((.*)\)\s*%?$', r'-\1', regex=True)  # (12.3%) → -12.3
+      .str.replace('%', '', regex=False)                 # strip %
+      .str.strip(),
+    errors='coerce'   # bad values → NaN (inspect with isna() if needed)
+    )
     # Define the filter conditions
     condition1 = (df1['Payment_Date'].dt.year <= 2024) & (df1['Payment_Total_Percent'] >= 100)
     condition2 = (df1['Payment_Date'].dt.year <= 2023) & (df1['Payment_Total_Percent'] >= 95)
@@ -234,14 +242,14 @@ def scrape_raw_il() -> pd.DataFrame:
         chunk_end = min(chunk_start + CHUNK_SIZE, total)
         chunk_nums = remaining[chunk_start:chunk_end]
         abs_start = start_idx + chunk_start
-        logging.info(f"[IL] chunk {abs_start}-{abs_start + len(chunk_nums)-1}")
+        logger.info(f"[IL] chunk {abs_start}-{abs_start + len(chunk_nums)-1}")
         try:
             rows = _scrape_il_chunk(chunk_nums)          # >>> ADDED helper above
             chunk_df = pd.DataFrame(data=rows, columns=header_data_il) # Ensures there is no mismatch in columns
             all_rows.extend(rows)
             _save_progress(start_idx + chunk_end, PROGRESS_FILE)                 # >>> ADDED
         except Exception as exc:
-            logging.exception("[IL] chunk failed: will retry next run", exc_info=exc)
+            logger.exception("[IL] chunk failed: will retry next run", exc_info=exc)
             if all_rows:  # If we have some rows, load them to DB andsave progress
                 tmp_df = pd.DataFrame(all_rows, columns=header_data_il)
                 transform_and_load_il(tmp_df)
@@ -394,7 +402,7 @@ def transform_and_load_il(il_dot_data: pd.DataFrame) -> pd.DataFrame:
     con.close()
 
     print("Illinois scraping completed and DUCKDB file updated Successfully.")
-    logging.info(
+    logger.info(
         'Illinois scraping completed and DUCKDB file updated Successfully.')
 
     return combined_data
@@ -406,10 +414,10 @@ def data_appended_il(combined_data: pd.DataFrame) -> pd.DataFrame: # Fetch the d
     appended_data = combined_data[combined_data["Pull_Date_Initial"] == current_date]
     if appended_data.empty:
         print('Data not yet updated on Website.')
-        logging.info(
+        logger.info(
             'Data not yet updated on Website.'
         )
     else:
         print('Successfully appended latest data.')
-        logging.info('Successfully appended latest data.')
+        logger.info('Successfully appended latest data.')
     return appended_data

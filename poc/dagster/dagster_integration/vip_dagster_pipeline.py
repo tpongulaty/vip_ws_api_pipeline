@@ -56,11 +56,11 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 STATES = ["wv", "ok", "ga", "wa", "de", "il","la","ny"]  # List of states to automate
 partitions_def = StaticPartitionsDefinition(STATES)
 RETRY_POLICY = RetryPolicy(
-    max_retries=2,  # Retry up to 2 times
+    max_retries=2,  # Retry up to n times
     delay=30,  # Wait 30 seconds between retries
 )
 
-@asset(partitions_def=partitions_def, key_prefix=["dot_data"],retry_policy=RETRY_POLICY)
+@asset(partitions_def=partitions_def, key_prefix=["dot_data"], retry_policy=RETRY_POLICY)
 def raw_data(context):
     state = context.partition_key
     if state not in STATES:

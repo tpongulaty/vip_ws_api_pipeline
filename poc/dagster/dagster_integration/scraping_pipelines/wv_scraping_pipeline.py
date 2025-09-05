@@ -1,5 +1,4 @@
 import duckdb
-import logging
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -16,10 +15,12 @@ import os
 from dotenv import load_dotenv  
 # Load environment variables from .env file
 load_dotenv()
-
+from dagster import get_dagster_logger
+logger = get_dagster_logger()
 from webdriver_manager.chrome import ChromeDriverManager
 
-
+OPTS = Options()
+OPTS.add_argument("--headless") # Ensures the browser is headless
 def scrape_raw_wv() -> pd.DataFrame:
     """
     Scrape the WV DOT contracts table and return the raw DataFrame.
@@ -27,11 +28,9 @@ def scrape_raw_wv() -> pd.DataFrame:
     # Automatic driver installer
     service = Service(ChromeDriverManager().install())
     url = 'https://www.wva.state.wv.us/wvdot/surety/'
-    opts = Options()    
-    opts.add_argument("--headless")
-    driver = webdriver.Chrome(service=service, options=opts)
+    driver = webdriver.Chrome(service=service, options=OPTS)
     driver.get(url)  
-    driver.set_window_size(1920,1080)   # adjust window size to avoid elements from overlapping 
+    driver.maximize_window() 
     row_data_list_wv = []
     header_data_wv = []
 
@@ -51,7 +50,7 @@ def scrape_raw_wv() -> pd.DataFrame:
             if i == 0:
                 continue  # Skip the 'select vendor' option
 
-            logging.info(f"Scraping for vendor: {vendor_name}")
+            logger.info(f"Scraping for vendor: {vendor_name}")
             select.select_by_visible_text(vendor_name)
 
             WebDriverWait(driver, 10).until(
@@ -210,7 +209,7 @@ def transform_and_load_wv(wv_dot_data: pd.DataFrame) -> pd.DataFrame:
         # Close connection
         con.close()
         print("West Virginia scraping completed and DUCKDB file updated Successfully.")
-        logging.info(
+        logger.info(
             'West Virginia scraping completed and DUCKDB file updated Successfully.')
         return combined_data
 
@@ -224,10 +223,10 @@ def data_appended_wv(combined_data: pd.DataFrame) -> pd.DataFrame: # Fetch the d
     appended_data = combined_data[combined_data["Pull_Date_Initial"] == current_date]
     if appended_data.empty:
         print('Data not yet updated on Website.')
-        logging.info(
+        logger.info(
             'Data not yet updated on Website.'
         )
     else:
         print('Successfully appended latest data.')
-        logging.info('Successfully appended latest data.')
+        logger.info('Successfully appended latest data.')
     return appended_data
