@@ -1,5 +1,8 @@
 # Code Location
-"""All the base code for Scraping and API is within the 'poc' folder. For API, there are individual .py files. For Scraping all code is consolidated into a Jupyter Notebook for now."""
+"""All the base code for Scraping and API is within the 'poc' folder. All individual scraping and api pipelines are under poc/dagster/dagster_integration/scraping_pipelines folder. All these scripts are integrated into the vip_dagster_pipeline.py which the main file that launches dagster app for orchestration and maintaining the pipelines."""
+
+# Launching Dagster
+Launch dagster by navigating to poc/dagster/dagster_integration and running "dagster dev -m vip_dagster_pipeline"
 
 # dagster_pipeline_template
 
